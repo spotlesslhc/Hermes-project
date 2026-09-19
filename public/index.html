@@ -1,184 +1,623 @@
-// Hermes — Worker entry point.
-//
-// Static files in /public (the dashboard itself) are served automatically
-// by Cloudflare's assets binding and never reach this script. Everything
-// below only handles the dynamic routes: /api/* and /webhooks/*.
-
-const HERMES_SYSTEM_PROMPT = `You are Hermes, the dispatcher AI for Spotless Cleaning, a company in Lake Havasu City, AZ that cleans short-term-rental properties (booked through Airbnb and similar platforms, managed via Hospitable and Hostaway) between guest stays.
-
-Bryce Wiesner owns the business and talks to you directly through his dashboard. You oversee four areas of work:
-- Zapier Overseer: watches the automations that move new reservations into Google Calendar.
-- Scheduler: decides which cleaner should be assigned to which turnover, and flags anything unassigned.
-- Bookkeeper: tracks job income and cleaning-supply expenses in Wave.
-- Site Editor: drafts updates for spotlesslhc.com.
-
-Right now you can talk and reason, but you don't yet have direct tool access to any of these systems — that gets added incrementally. When a request needs information or an action you don't have access to yet, say so plainly and tell Bryce exactly what you'd need (a cleaner's name, a specific figure, access to a specific app) rather than guessing.
-
-Be direct and brief — Bryce is running a small business day to day, not looking for long explanations. Sentence case, no filler, plain language.`;
-
-// ---- KV helpers ---------------------------------------------------------
-
-const DEFAULT_STATUS = {
-  zapier_overseer: { status: "running", label: "Running", lastChecked: null, zapsWatched: 6, errors: 0 },
-  scheduler: { status: "running", label: "Running", unassigned: 0, nextJob: null },
-  bookkeeper: { status: "running", label: "Running", lastEntry: null, openItems: 0 },
-  site_editor: { status: "idle", label: "Idle", lastPublish: null }
-};
-
-async function getStatus(env) {
-  const raw = await env.HERMES_KV.get("agent_status");
-  return raw ? JSON.parse(raw) : null;
-}
-
-async function getStatusOrDefault(env) {
-  return (await getStatus(env)) || DEFAULT_STATUS;
-}
-
-async function setStatus(env, patch) {
-  const current = (await getStatus(env)) || DEFAULT_STATUS;
-  const updated = { ...current, ...patch };
-  await env.HERMES_KV.put("agent_status", JSON.stringify(updated));
-  return updated;
-}
-
-async function appendLog(env, entry) {
-  const raw = await env.HERMES_KV.get("activity_log");
-  const log = raw ? JSON.parse(raw) : [];
-  log.push({ time: new Date().toISOString(), ...entry });
-  const trimmed = log.slice(-200);
-  await env.HERMES_KV.put("activity_log", JSON.stringify(trimmed));
-  return trimmed;
-}
-
-async function getLog(env, limit = 30) {
-  const raw = await env.HERMES_KV.get("activity_log");
-  const log = raw ? JSON.parse(raw) : [];
-  return log.slice(-limit).reverse();
-}
-
-function json(data, init = {}) {
-  return new Response(JSON.stringify(data), {
-    ...init,
-    headers: { "content-type": "application/json", ...(init.headers || {}) }
-  });
-}
-
-// ---- Route handlers -------------------------------------------------------
-
-async function handleAsk(request, env) {
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ error: "Invalid JSON body" }, { status: 400 });
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hermes — Spotless Cleaning</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#F1F3F0;
+    --paper-raised:#FFFFFF;
+    --ink:#10202A;
+    --ink-soft:#4C6373;
+    --line:#D7DCD6;
+    --line-strong:#B7C0BA;
+    --teal:#2F7A78;
+    --teal-deep:#1F5654;
+    --amber:#D9A441;
+    --amber-deep:#96701F;
+    --green:#3F8F6F;
+    --red:#B24B3B;
+    --shadow: none;
+  }
+  :root:not([data-theme="light"]) @media-dark-placeholder{}
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#0E1518;
+      --paper-raised:#161F23;
+      --ink:#EAEEEC;
+      --ink-soft:#93A3A8;
+      --line:#2A353A;
+      --line-strong:#3B4A50;
+      --teal:#4FA8A4;
+      --teal-deep:#7BC4C0;
+      --amber:#E3B45D;
+      --amber-deep:#F0C878;
+      --green:#5CB690;
+      --red:#D97A68;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0E1518;
+    --paper-raised:#161F23;
+    --ink:#EAEEEC;
+    --ink-soft:#93A3A8;
+    --line:#2A353A;
+    --line-strong:#3B4A50;
+    --teal:#4FA8A4;
+    --teal-deep:#7BC4C0;
+    --amber:#E3B45D;
+    --amber-deep:#F0C878;
+    --green:#5CB690;
+    --red:#D97A68;
   }
 
-  const message = (body.message || "").toString().slice(0, 4000);
-  if (!message) return json({ error: "Message is required" }, { status: 400 });
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:var(--paper); color:var(--ink); font-family:'Work Sans', system-ui, sans-serif; -webkit-font-smoothing:antialiased;}
+  body{min-height:100vh; padding: 28px 20px 80px;}
+  .wrap{max-width:1080px; margin:0 auto;}
 
-  if (!env.ANTHROPIC_API_KEY) {
-    return json({ error: "ANTHROPIC_API_KEY is not bound on this project yet." }, { status: 500 });
+  .head{
+    display:flex; align-items:flex-end; justify-content:space-between;
+    gap:16px; flex-wrap:wrap;
+    border-bottom:2px solid var(--ink);
+    padding-bottom:16px; margin-bottom:22px;
   }
-  // Secrets Store bindings expose the value via .get() rather than as a
-  // plain string, unlike classic Worker secrets.
-  const apiKey = await env.ANTHROPIC_API_KEY.get();
+  .brand{display:flex; align-items:baseline; gap:14px;}
+  .brand h1{
+    font-family:'Barlow Condensed', sans-serif; font-weight:700;
+    font-size:clamp(34px,6vw,52px); letter-spacing:0.5px; line-height:0.9;
+  }
+  .brand .tag{
+    font-size:13px; color:var(--ink-soft); border-left:1px solid var(--line-strong);
+    padding-left:14px; line-height:1.3; max-width:220px;
+  }
+  .head-right{display:flex; align-items:center; gap:18px;}
+  .clock{font-size:13px; color:var(--ink-soft); text-align:right; line-height:1.4;}
+  .clock .day{color:var(--ink); font-weight:500;}
+  .overall{
+    display:flex; align-items:center; gap:8px;
+    font-size:13px; font-weight:500;
+    background:var(--paper-raised); border:1px solid var(--line);
+    padding:7px 12px 7px 10px; border-radius:3px;
+  }
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--green); flex:none;}
+  .dot.amber{background:var(--amber);}
+  .dot.red{background:var(--red);}
+  .dot.pulse{animation:pulse 2.2s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;} 50%{opacity:.35;}}
 
-  const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-5",
-      max_tokens: 800,
-      system: HERMES_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: message }]
-    })
+  /* App launcher — icon grid */
+  .apps{
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap:14px; margin-bottom:32px;
+  }
+  .app-tile{
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+    text-decoration:none; color:var(--ink);
+    padding:14px 8px 12px;
+    border-radius:6px;
+    transition: background .15s, transform .1s;
+  }
+  .app-tile:hover{background:var(--paper-raised); transform:translateY(-2px);}
+  .app-tile:active{transform:translateY(0);}
+  .app-icon{
+    width:56px; height:56px; border-radius:14px;
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Barlow Condensed', sans-serif; font-weight:700; font-size:22px;
+    color:#fff;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.06);
+  }
+  .app-tile .app-name{font-size:12.5px; font-weight:500; text-align:center; line-height:1.25;}
+
+  /* Section headers */
+  .section-head{
+    display:flex; align-items:baseline; justify-content:space-between;
+    margin: 34px 0 12px;
+  }
+  .section-head h2{
+    font-family:'Barlow Condensed', sans-serif; font-weight:600;
+    font-size:22px; letter-spacing:0.2px;
+  }
+  .section-head .hint{font-size:12.5px; color:var(--ink-soft);}
+
+  /* Agents grid — asymmetric, not uniform cards */
+  .agents{
+    display:grid;
+    grid-template-columns: 1.35fr 1fr;
+    grid-auto-rows:min-content;
+    gap:14px;
+  }
+  @media (max-width:720px){ .agents{grid-template-columns:1fr;} }
+
+  .agent{
+    background:var(--paper-raised);
+    border:1px solid var(--line);
+    border-left:3px solid var(--line-strong);
+    border-radius:3px;
+    padding:18px 20px;
+    display:flex; flex-direction:column; gap:10px;
+  }
+  .agent.on{border-left-color:var(--teal);}
+  .agent.attn{border-left-color:var(--amber);}
+
+  .agent-top{display:flex; align-items:flex-start; justify-content:space-between; gap:10px;}
+  .agent-name{font-size:17px; font-weight:600;}
+  .agent-role{font-size:12.5px; color:var(--ink-soft); margin-top:2px;}
+  .status-pill{
+    display:flex; align-items:center; gap:6px;
+    font-size:11.5px; color:var(--ink-soft);
+    white-space:nowrap; padding-top:2px;
+  }
+
+  .agent-meta{
+    display:flex; gap:22px; flex-wrap:wrap;
+    font-size:12.5px; color:var(--ink-soft);
+    border-top:1px solid var(--line); padding-top:10px; margin-top:2px;
+  }
+  .agent-meta b{color:var(--ink); font-weight:500;}
+
+  .agent-actions{display:flex; gap:8px; margin-top:2px;}
+  .btn{
+    font-family:inherit; font-size:12.5px; font-weight:500;
+    background:transparent; border:1px solid var(--line-strong);
+    color:var(--ink); padding:6px 11px; border-radius:3px;
+    cursor:pointer; transition: border-color .15s, background .15s;
+  }
+  .btn:hover{border-color:var(--teal); background:rgba(47,122,120,0.07);}
+  .btn.primary{background:var(--ink); color:var(--paper); border-color:var(--ink);}
+  .btn.primary:hover{opacity:.88; background:var(--ink);}
+
+  /* Log */
+  .log{
+    background:var(--paper-raised); border:1px solid var(--line); border-radius:3px;
+    overflow:hidden;
+  }
+  .log-row{
+    display:grid; grid-template-columns: 88px 130px 1fr;
+    gap:14px; padding:11px 16px; align-items:baseline;
+    border-bottom:1px solid var(--line); font-size:13px;
+  }
+  .log-row:last-child{border-bottom:none;}
+  .log-row .t{color:var(--ink-soft); font-variant-numeric:tabular-nums;}
+  .log-row .who{font-weight:500; color:var(--teal-deep);}
+  .log-row .what{color:var(--ink);}
+
+  /* Ask Hermes */
+  .ask-panel{
+    background:var(--paper-raised); border:1px solid var(--line); border-radius:3px;
+    padding:18px 20px;
+  }
+  .ask-who{display:flex; align-items:center; gap:12px; margin-bottom:14px;}
+  .ask-avatar{
+    width:38px; height:38px; border-radius:50%;
+    background:var(--ink); color:var(--paper);
+    display:flex; align-items:center; justify-content:center;
+    font-size:18px; flex:none;
+    transition: box-shadow .2s;
+  }
+  .ask-avatar.listening{box-shadow:0 0 0 4px rgba(217,164,65,0.35); background:var(--amber-deep);}
+  .ask-avatar.speaking{box-shadow:0 0 0 4px rgba(47,122,120,0.3);}
+  .ask-name{font-size:14px; font-weight:600;}
+  .ask-state{font-size:11.5px; color:var(--ink-soft);}
+  .voice-toggle{
+    margin-left:auto; display:flex; align-items:center; gap:6px;
+    font-size:12px; color:var(--ink-soft); cursor:pointer; user-select:none;
+  }
+  .voice-toggle input{accent-color:var(--teal);}
+  .ask-reply{
+    font-size:14px; line-height:1.55; color:var(--ink);
+    white-space:pre-wrap; margin-bottom:14px; min-height:22px;
+  }
+  .ask-reply.pending{color:var(--ink-soft); font-style:italic;}
+  .ask-row{display:flex; gap:10px;}
+  .mic-btn{
+    flex:none; width:38px; height:38px; border-radius:3px;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--paper); border:1px solid var(--line-strong); color:var(--ink);
+    cursor:pointer; transition: border-color .15s, background .15s, color .15s;
+  }
+  .mic-btn:hover{border-color:var(--teal);}
+  .mic-btn.listening{background:var(--amber-deep); border-color:var(--amber-deep); color:#fff; animation:pulse 1.4s ease-in-out infinite;}
+  .mic-btn[disabled]{opacity:.35; cursor:not-allowed;}
+  .ask-input{
+    flex:1; font-family:inherit; font-size:13.5px;
+    background:var(--paper); border:1px solid var(--line-strong); border-radius:3px;
+    padding:9px 12px; color:var(--ink);
+  }
+  .ask-input:focus-visible{outline:2px solid var(--teal); outline-offset:1px;}
+
+  footer{
+    max-width:1080px; margin:40px auto 0; padding-top:16px;
+    border-top:1px solid var(--line); font-size:12px; color:var(--ink-soft);
+    display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;
+  }
+
+  ::selection{background:var(--teal); color:var(--paper);}
+  a{color:inherit;}
+  button:focus-visible, a:focus-visible{outline:2px solid var(--teal); outline-offset:2px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="head">
+    <div class="brand">
+      <h1>Hermes</h1>
+      <div class="tag">Dispatch &amp; oversight for Spotless Cleaning, Lake Havasu City</div>
+    </div>
+    <div class="head-right">
+      <div class="overall"><span class="dot pulse" id="overallDot"></span><span id="overallText">4 agents running</span></div>
+      <div class="clock"><div class="day" id="clockDay">—</div><div id="clockTime">—</div></div>
+    </div>
+  </div>
+
+  <div class="apps">
+    <a class="app-tile" href="https://zapier.com/app/login" target="_blank" rel="noopener">
+      <span class="app-icon" style="background:#FF4A00">Z</span>
+      <span class="app-name">Zapier</span>
+    </a>
+    <a class="app-tile" href="https://calendar.google.com" target="_blank" rel="noopener">
+      <span class="app-icon" style="background:#1A73E8">C</span>
+      <span class="app-name">Calendar</span>
+    </a>
+    <a class="app-tile" href="https://mail.google.com" target="_blank" rel="noopener">
+      <span class="app-icon" style="background:#C1503D">M</span>
+      <span class="app-name">Gmail</span>
+    </a>
+    <a class="app-tile" href="https://dash.cloudflare.com" target="_blank" rel="noopener">
+      <span class="app-icon" style="background:var(--amber-deep)">CF</span>
+      <span class="app-name">Cloudflare</span>
+    </a>
+    <a class="app-tile" href="https://spotlesslhc.com" target="_blank" rel="noopener">
+      <span class="app-icon" style="background:var(--teal-deep)">S</span>
+      <span class="app-name">spotlesslhc.com</span>
+    </a>
+    <a class="app-tile" href="https://my.hospitable.com" target="_blank" rel="noopener">
+      <span class="app-icon" style="background:#0FA98B">Hp</span>
+      <span class="app-name">Hospitable</span>
+    </a>
+    <a class="app-tile" href="https://dashboard.hostaway.com" target="_blank" rel="noopener">
+      <span class="app-icon" style="background:#2657D9">Ho</span>
+      <span class="app-name">Hostaway</span>
+    </a>
+    <a class="app-tile" href="https://my.waveapps.com" target="_blank" rel="noopener">
+      <span class="app-icon" style="background:#4C6FFF">W</span>
+      <span class="app-name">Wave</span>
+    </a>
+    <a class="app-tile" href="https://venmo.com/account" target="_blank" rel="noopener">
+      <span class="app-icon" style="background:#3D95CE">V</span>
+      <span class="app-name">Venmo</span>
+    </a>
+    <a class="app-tile" href="https://connect.foothillsbank.com/login?returnUrl=%2Fzelle" target="_blank" rel="noopener">
+      <span class="app-icon" style="background:#6D1ED4">FB</span>
+      <span class="app-name">Foothills Bank</span>
+    </a>
+  </div>
+
+  <div class="section-head">
+    <h2>Agents</h2>
+    <div class="hint">Preview data — nothing below is connected yet</div>
+  </div>
+
+  <div class="agents" id="agentsGrid">
+    <div class="agent on" data-agent="zapier_overseer">
+      <div class="agent-top">
+        <div>
+          <div class="agent-name">Zapier Overseer</div>
+          <div class="agent-role">Watches every Zap tied to the reservation pipeline</div>
+        </div>
+        <div class="status-pill"><span class="dot"></span><span class="status-label">Running</span></div>
+      </div>
+      <div class="agent-meta">
+        <span>Last checked <b class="m-lastchecked">4 min ago</b></span>
+        <span>Zaps watched <b class="m-zaps">6</b></span>
+        <span>Errors this week <b class="m-errors">0</b></span>
+      </div>
+      <div class="agent-actions">
+        <button class="btn">View Zaps</button>
+        <button class="btn">Run check now</button>
+      </div>
+    </div>
+
+    <div class="agent attn" data-agent="scheduler">
+      <div class="agent-top">
+        <div>
+          <div class="agent-name">Scheduler</div>
+          <div class="agent-role">Assigns cleaners to turnovers on the calendar</div>
+        </div>
+        <div class="status-pill"><span class="dot amber"></span><span class="status-label">Needs review</span></div>
+      </div>
+      <div class="agent-meta">
+        <span>Unassigned <b class="m-unassigned">1 turnover</b></span>
+        <span>Next job <b class="m-nextjob">Today, 2:00 PM</b></span>
+      </div>
+      <div class="agent-actions">
+        <button class="btn primary">Review</button>
+      </div>
+    </div>
+
+    <div class="agent on" data-agent="bookkeeper">
+      <div class="agent-top">
+        <div>
+          <div class="agent-name">Bookkeeper</div>
+          <div class="agent-role">Logs job income and cleaning-supply expenses</div>
+        </div>
+        <div class="status-pill"><span class="dot"></span><span class="status-label">Running</span></div>
+      </div>
+      <div class="agent-meta">
+        <span>Last entry <b class="m-lastentry">Yesterday</b></span>
+        <span>Open items <b class="m-openitems">2</b></span>
+      </div>
+      <div class="agent-actions">
+        <button class="btn">Open ledger</button>
+      </div>
+    </div>
+
+    <div class="agent" data-agent="site_editor">
+      <div class="agent-top">
+        <div>
+          <div class="agent-name">Site Editor</div>
+          <div class="agent-role">Publishes updates to spotlesslhc.com</div>
+        </div>
+        <div class="status-pill"><span class="dot" style="background:var(--ink-soft)"></span><span class="status-label">Idle</span></div>
+      </div>
+      <div class="agent-meta">
+        <span>Last publish <b class="m-lastpublish">12 days ago</b></span>
+      </div>
+      <div class="agent-actions">
+        <button class="btn">Send an update</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-head">
+    <h2>Activity</h2>
+    <div class="hint">Most recent first</div>
+  </div>
+
+  <div class="log" id="logList">
+    <div class="log-row"><span class="t">9:14 AM</span><span class="who">Scheduler</span><span class="what">Flagged 214 Sunset Ave turnover — no cleaner assigned yet, guest checks out 11:00 AM</span></div>
+    <div class="log-row"><span class="t">8:52 AM</span><span class="who">Zapier Overseer</span><span class="what">Confirmed reservation Zap ran cleanly — new booking added to calendar for 402 Countryshire Rd</span></div>
+    <div class="log-row"><span class="t">7:30 AM</span><span class="who">Bookkeeper</span><span class="what">Logged supply purchase — $38.12, cleaning solution restock</span></div>
+    <div class="log-row"><span class="t">Yesterday</span><span class="who">Bookkeeper</span><span class="what">Recorded payout for last week's completed turnovers</span></div>
+    <div class="log-row"><span class="t">Yesterday</span><span class="who">Site Editor</span><span class="what">No action needed — site unchanged</span></div>
+    <div class="log-row"><span class="t">2 days ago</span><span class="who">Zapier Overseer</span><span class="what">Caught a delayed webhook and retried it successfully</span></div>
+  </div>
+
+  <div class="section-head">
+    <h2>Talk to Hermes</h2>
+    <div class="hint">Type or use the mic — Hermes can reply out loud</div>
+  </div>
+  <div class="ask-panel">
+    <div class="ask-who">
+      <span class="ask-avatar" id="askAvatar">🪽</span>
+      <div>
+        <div class="ask-name">Hermes</div>
+        <div class="ask-state" id="askState">Ready</div>
+      </div>
+      <label class="voice-toggle">
+        <input type="checkbox" id="voiceToggle" checked>
+        <span>Speak replies</span>
+      </label>
+    </div>
+    <div class="ask-reply" id="askReply">Ask about a job, a property, or what needs attention today.</div>
+    <form id="askForm" class="ask-row">
+      <button type="button" class="mic-btn" id="micBtn" title="Talk to Hermes" aria-label="Talk to Hermes">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+      </button>
+      <input id="askInput" class="ask-input" type="text" placeholder="e.g. What needs my attention today?" autocomplete="off">
+      <button class="btn primary" type="submit" id="askSend">Send</button>
+    </form>
+  </div>
+
+  <footer>
+    <span>Hermes · internal tool</span>
+    <span id="footDate">—</span>
+  </footer>
+</div>
+
+<script>
+  function tick(){
+    const now = new Date();
+    document.getElementById('clockDay').textContent = now.toLocaleDateString(undefined,{weekday:'long', month:'short', day:'numeric'});
+    document.getElementById('clockTime').textContent = now.toLocaleTimeString(undefined,{hour:'numeric', minute:'2-digit'});
+    document.getElementById('footDate').textContent = now.toLocaleDateString(undefined,{year:'numeric', month:'short', day:'numeric'}) + ' · Lake Havasu City, AZ';
+  }
+  tick();
+  setInterval(tick, 30000);
+
+  const STATUS_DOT = { running: '', attn: 'amber', error: 'red', idle: '' };
+  const STATUS_BORDER = { running: 'on', attn: 'attn', error: 'attn', idle: '' };
+
+  function timeAgo(iso){
+    if(!iso) return '—';
+    const diffMs = Date.now() - new Date(iso).getTime();
+    const mins = Math.round(diffMs / 60000);
+    if(mins < 1) return 'just now';
+    if(mins < 60) return mins + ' min ago';
+    const hrs = Math.round(mins / 60);
+    if(hrs < 24) return hrs + (hrs===1 ? ' hour ago' : ' hours ago');
+    const days = Math.round(hrs / 24);
+    return days + (days===1 ? ' day ago' : ' days ago');
+  }
+
+  async function loadStatus(){
+    try{
+      const res = await fetch('/api/status');
+      if(!res.ok) return;
+      const data = await res.json();
+      let runningCount = 0;
+      document.querySelectorAll('[data-agent]').forEach(card => {
+        const key = card.getAttribute('data-agent');
+        const a = data[key];
+        if(!a) return;
+        card.classList.remove('on','attn');
+        const borderClass = STATUS_BORDER[a.status] || '';
+        if(borderClass) card.classList.add(borderClass);
+        if(a.status === 'running') runningCount++;
+
+        const dot = card.querySelector('.status-pill .dot');
+        dot.className = 'dot' + (STATUS_DOT[a.status] ? ' ' + STATUS_DOT[a.status] : '');
+        const label = card.querySelector('.status-label');
+        if(label) label.textContent = a.label || a.status;
+
+        if(key === 'zapier_overseer'){
+          card.querySelector('.m-lastchecked') && (card.querySelector('.m-lastchecked').textContent = timeAgo(a.lastChecked));
+          card.querySelector('.m-zaps') && (card.querySelector('.m-zaps').textContent = a.zapsWatched ?? '—');
+          card.querySelector('.m-errors') && (card.querySelector('.m-errors').textContent = a.errors ?? 0);
+        }
+        if(key === 'scheduler'){
+          card.querySelector('.m-unassigned') && (card.querySelector('.m-unassigned').textContent = (a.unassigned ?? 0) + ' turnover' + (a.unassigned === 1 ? '' : 's'));
+          card.querySelector('.m-nextjob') && (card.querySelector('.m-nextjob').textContent = a.nextJob || '—');
+        }
+        if(key === 'bookkeeper'){
+          card.querySelector('.m-lastentry') && (card.querySelector('.m-lastentry').textContent = timeAgo(a.lastEntry));
+          card.querySelector('.m-openitems') && (card.querySelector('.m-openitems').textContent = a.openItems ?? 0);
+        }
+        if(key === 'site_editor'){
+          card.querySelector('.m-lastpublish') && (card.querySelector('.m-lastpublish').textContent = timeAgo(a.lastPublish));
+        }
+      });
+      document.getElementById('overallText').textContent = runningCount + ' of ' + document.querySelectorAll('[data-agent]').length + ' agents running';
+    }catch(e){ /* Not deployed yet, or offline — leave the preview data showing. */ }
+  }
+
+  async function loadLog(){
+    try{
+      const res = await fetch('/api/log');
+      if(!res.ok) return;
+      const entries = await res.json();
+      if(!entries.length) return;
+      const container = document.getElementById('logList');
+      container.innerHTML = entries.map(e => `
+        <div class="log-row">
+          <span class="t">${timeAgo(e.time)}</span>
+          <span class="who">${e.who || 'Hermes'}</span>
+          <span class="what">${e.what || ''}</span>
+        </div>`).join('');
+    }catch(e){ /* Not deployed yet, or offline — leave the preview data showing. */ }
+  }
+
+  document.getElementById('askForm').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const input = document.getElementById('askInput');
+    const reply = document.getElementById('askReply');
+    const sendBtn = document.getElementById('askSend');
+    const stateEl = document.getElementById('askState');
+    const avatar = document.getElementById('askAvatar');
+    const message = input.value.trim();
+    if(!message) return;
+
+    reply.textContent = 'Thinking…';
+    reply.classList.add('pending');
+    sendBtn.disabled = true;
+    stateEl.textContent = 'Thinking…';
+
+    try{
+      const res = await fetch('/api/ask', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message })
+      });
+      const data = await res.json();
+      reply.classList.remove('pending');
+      const text = res.ok ? data.reply : ('Hermes hit a snag: ' + (data.error || 'unknown error'));
+      reply.textContent = text;
+      stateEl.textContent = 'Ready';
+      if(res.ok){
+        loadLog();
+        if(document.getElementById('voiceToggle').checked){
+          speak(text, avatar, stateEl);
+        }
+      }
+    }catch(e){
+      reply.classList.remove('pending');
+      reply.textContent = "Couldn't reach Hermes — this dashboard may not be deployed yet.";
+      stateEl.textContent = 'Ready';
+    }finally{
+      sendBtn.disabled = false;
+      input.value = '';
+    }
   });
 
-  if (!apiRes.ok) {
-    const detail = await apiRes.text();
-    return json({ error: "Hermes couldn't reach the model", detail }, { status: 502 });
+  function speak(text, avatar, stateEl){
+    if(!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.rate = 1.02;
+    utter.onstart = () => { avatar.classList.add('speaking'); stateEl.textContent = 'Speaking…'; };
+    utter.onend = () => { avatar.classList.remove('speaking'); stateEl.textContent = 'Ready'; };
+    window.speechSynthesis.speak(utter);
   }
 
-  const data = await apiRes.json();
-  const reply = (data.content || [])
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
+  // Speech-to-text: click the mic, talk, Hermes auto-sends what you said.
+  (function setUpMic(){
+    const micBtn = document.getElementById('micBtn');
+    const avatar = document.getElementById('askAvatar');
+    const stateEl = document.getElementById('askState');
+    const input = document.getElementById('askInput');
+    const form = document.getElementById('askForm');
+    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-  await appendLog(env, { who: "Hermes", what: message.slice(0, 140) });
-
-  return json({ reply });
-}
-
-async function handleReservation(request, env) {
-  let body;
-  try {
-    body = await request.json();
-  } catch {
-    return json({ error: "Invalid JSON body" }, { status: 400 });
-  }
-
-  const property = body.property || body.listing_name || "Unknown property";
-  const guest = body.guest_name || "Guest";
-  const checkout = body.checkout || body.checkout_date || null;
-
-  const raw = await env.HERMES_KV.get("reservations");
-  const reservations = raw ? JSON.parse(raw) : [];
-  reservations.push({
-    id: crypto.randomUUID(),
-    property,
-    guest,
-    checkout,
-    assigned: false,
-    receivedAt: new Date().toISOString()
-  });
-  await env.HERMES_KV.put("reservations", JSON.stringify(reservations.slice(-500)));
-
-  const status = await getStatusOrDefault(env);
-  const scheduler = status.scheduler || {};
-  const unassigned = (scheduler.unassigned || 0) + 1;
-  await setStatus(env, {
-    scheduler: { ...scheduler, status: "attn", label: "Needs review", unassigned, nextJob: checkout }
-  });
-
-  await appendLog(env, {
-    who: "Scheduler",
-    what: `New reservation at ${property} \u2014 needs a cleaner assigned (checkout ${checkout || "TBD"})`
-  });
-
-  return json({ ok: true });
-}
-
-// ---- Router -----------------------------------------------------------
-
-export default {
-  async fetch(request, env) {
-    const { pathname } = new URL(request.url);
-    const { method } = request;
-
-    if (pathname === "/api/status" && method === "GET") {
-      return json(await getStatusOrDefault(env));
-    }
-    if (pathname === "/api/log" && method === "GET") {
-      return json(await getLog(env, 30));
-    }
-    if (pathname === "/api/ask" && method === "POST") {
-      return handleAsk(request, env);
-    }
-    if (pathname === "/webhooks/reservation" && method === "POST") {
-      return handleReservation(request, env);
+    if(!SpeechRecognitionAPI){
+      micBtn.disabled = true;
+      micBtn.title = "Voice input isn't supported in this browser — try Chrome";
+      return;
     }
 
-    // Anything else falls back to the static files in /public (this
-    // shouldn't normally be needed — Cloudflare usually serves matching
-    // assets before the Worker even runs — but it's a safety net).
-    if (env.ASSETS) {
-      return env.ASSETS.fetch(request);
-    }
-    return new Response("Not found", { status: 404 });
-  }
-};
+    const recognition = new SpeechRecognitionAPI();
+    recognition.lang = 'en-US';
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    let listening = false;
+
+    recognition.onstart = () => {
+      listening = true;
+      micBtn.classList.add('listening');
+      avatar.classList.add('listening');
+      stateEl.textContent = 'Listening…';
+    };
+    recognition.onresult = (ev) => {
+      let transcript = '';
+      for(let i = 0; i < ev.results.length; i++){
+        transcript += ev.results[i][0].transcript;
+      }
+      input.value = transcript;
+    };
+    recognition.onerror = () => {
+      stateEl.textContent = 'Ready';
+    };
+    recognition.onend = () => {
+      listening = false;
+      micBtn.classList.remove('listening');
+      avatar.classList.remove('listening');
+      if(input.value.trim()){
+        stateEl.textContent = 'Ready';
+        form.requestSubmit();
+      } else {
+        stateEl.textContent = 'Ready';
+      }
+    };
+
+    micBtn.addEventListener('click', () => {
+      if(listening){
+        recognition.stop();
+      } else {
+        window.speechSynthesis.cancel();
+        input.value = '';
+        recognition.start();
+      }
+    });
+  })();
+
+  loadStatus();
+  loadLog();
+  setInterval(loadStatus, 60000);
+</script>
+</body>
+</html>
