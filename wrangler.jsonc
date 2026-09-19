@@ -4,6 +4,20 @@
   "main": "src/index.js",
   "compatibility_date": "2026-09-01",
   "assets": {
-    "directory": "public"
-  }
+    "directory": "public",
+    "binding": "ASSETS"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "HERMES_KV",
+      "id": "3fc1aeb7a68049ea98d94eac2e06c07d"
+    }
+  ],
+  "secrets_store_secrets": [
+    {
+      "binding": "ANTHROPIC_API_KEY",
+      "store_id": "8f15d6429b5741f9ac32e05415413a65",
+      "secret_name": "ANTHROPIC_API_KEY"
+    }
+  ]
 }
