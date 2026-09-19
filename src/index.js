@@ -77,14 +77,17 @@ async function handleAsk(request, env) {
   if (!message) return json({ error: "Message is required" }, { status: 400 });
 
   if (!env.ANTHROPIC_API_KEY) {
-    return json({ error: "ANTHROPIC_API_KEY is not set on this project yet." }, { status: 500 });
+    return json({ error: "ANTHROPIC_API_KEY is not bound on this project yet." }, { status: 500 });
   }
+  // Secrets Store bindings expose the value via .get() rather than as a
+  // plain string, unlike classic Worker secrets.
+  const apiKey = await env.ANTHROPIC_API_KEY.get();
 
   const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY,
+      "x-api-key": apiKey,
       "anthropic-version": "2023-06-01"
     },
     body: JSON.stringify({
@@ -170,6 +173,12 @@ export default {
       return handleReservation(request, env);
     }
 
+    // Anything else falls back to the static files in /public (this
+    // shouldn't normally be needed — Cloudflare usually serves matching
+    // assets before the Worker even runs — but it's a safety net).
+    if (env.ASSETS) {
+      return env.ASSETS.fetch(request);
+    }
     return new Response("Not found", { status: 404 });
   }
 };
