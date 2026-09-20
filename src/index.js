@@ -10,9 +10,11 @@ Bryce Wiesner owns the business and talks to you directly through his dashboard.
 - Zapier Overseer: watches the automations that move new reservations into Google Calendar.
 - Scheduler: decides which cleaner should be assigned to which turnover, and flags anything unassigned.
 - Bookkeeper: tracks job income and cleaning-supply expenses in Wave.
-- Site Editor: drafts updates for spotlesslhc.com.
+- Site Editor: drafts updates for spotlesslhc.com and the Hermes dashboard itself, using the propose_site_edit tool.
 
-Right now you can talk and reason, but you don't yet have direct tool access to any of these systems — that gets added incrementally. When a request needs information or an action you don't have access to yet, say so plainly and tell Bryce exactly what you'd need (a cleaner's name, a specific figure, access to a specific app) rather than guessing.
+You have one real tool right now: propose_site_edit. Use it whenever Bryce asks for a change to the website or dashboard \u2014 a wording tweak, a price update, a new section, a bug fix in the dashboard's own code. It does not publish anything directly: it reads the current file from GitHub, drafts the new version, and opens a pull request for Bryce to review and merge himself. Always tell him plainly that it's a PR waiting on his review, not a live change, and give him the PR link from the tool result.
+
+For everything else \u2014 Scheduler, Bookkeeper, Zapier Overseer \u2014 you can talk and reason, but you don't yet have direct tool access. Say so plainly and tell Bryce exactly what you'd need rather than guessing.
 
 Be direct and brief — Bryce is running a small business day to day, not looking for long explanations. Sentence case, no filler, plain language.`;
 
@@ -63,6 +65,159 @@ function json(data, init = {}) {
   });
 }
 
+// ---- Site Editor: GitHub PR flow ------------------------------------------
+//
+// Site Editor never pushes to main. It reads a file, drafts a new version
+// with Claude, commits that to a new branch, and opens a pull request.
+// Bryce reviews and merges (or closes) it himself on GitHub.
+
+const SITE_REPOS = {
+  website: "spotlesslhc/spotlesslhc-website",
+  dashboard: "spotlesslhc/Hermes-project"
+};
+
+function slugify(text) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 40) || "edit";
+}
+
+async function githubRequest(env, path, options = {}) {
+  const token = await env.GITHUB_TOKEN.get();
+  const res = await fetch(`https://api.github.com${path}`, {
+    ...options,
+    headers: {
+      "authorization": `Bearer ${token}`,
+      "accept": "application/vnd.github+json",
+      "user-agent": "hermes-site-editor",
+      ...(options.headers || {})
+    }
+  });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`GitHub API ${options.method || "GET"} ${path} failed: ${res.status} ${detail}`);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+// Cloudflare Workers' base64 helpers work on binary strings, not UTF-8
+// directly, so text needs to go through the URI-encoding round trip.
+function b64EncodeUtf8(str) {
+  return btoa(unescape(encodeURIComponent(str)));
+}
+function b64DecodeUtf8(str) {
+  return decodeURIComponent(escape(atob(str)));
+}
+
+// Applies find-and-replace edits, one at a time, requiring each old_str to
+// match the current content exactly once — same safety rule as Claude's own
+// str_replace tool. If any edit is ambiguous or missing, the whole batch is
+// rejected rather than risking a corrupted file going into the PR.
+function applyEdits(content, edits) {
+  let result = content;
+  for (const { old_str, new_str } of edits) {
+    const count = result.split(old_str).length - 1;
+    if (count === 0) {
+      throw new Error(`Edit failed: old_str not found in file (start: "${old_str.slice(0, 60)}...")`);
+    }
+    if (count > 1) {
+      throw new Error(`Edit failed: old_str matched ${count} places, must be unique (start: "${old_str.slice(0, 60)}...")`);
+    }
+    result = result.replace(old_str, new_str);
+  }
+  return result;
+}
+
+// Asks Claude for a small set of exact find-and-replace edits instead of the
+// whole file back. The file still counts as input tokens either way, but
+// output shrinks from "the entire file" to "a few short strings" \u2014 which
+// is both far cheaper and immune to the file getting cut off at max_tokens.
+async function draftFileEdits(env, currentContent, instructions) {
+  const apiKey = await env.ANTHROPIC_API_KEY.get();
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-5",
+      max_tokens: 2000,
+      system: "You edit a single source file for a small cleaning business by proposing find-and-replace edits, never a full rewrite. Call propose_edits exactly once. Each old_str must be copied EXACTLY from the file (including whitespace) and must appear only once in the whole file \u2014 include a few extra surrounding lines if needed to make it unique. Keep each edit as small as possible; never include unrelated unchanged code in old_str or new_str.",
+      tools: [{
+        name: "propose_edits",
+        description: "The find-and-replace edits to make to the file.",
+        input_schema: {
+          type: "object",
+          properties: {
+            edits: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  old_str: { type: "string", description: "Exact text to find, copied verbatim from the file, unique within it" },
+                  new_str: { type: "string", description: "Text to replace it with" }
+                },
+                required: ["old_str", "new_str"]
+              }
+            }
+          },
+          required: ["edits"]
+        }
+      }],
+      tool_choice: { type: "tool", name: "propose_edits" },
+      messages: [{
+        role: "user",
+        content: `Instructions: ${instructions}\n\n--- current file content ---\n${currentContent}`
+      }]
+    })
+  });
+  if (!res.ok) throw new Error(`Draft failed: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  const toolUse = (data.content || []).find((b) => b.type === "tool_use");
+  if (!toolUse) throw new Error("Model didn't return any edits");
+  return toolUse.input.edits;
+}
+
+async function proposeSiteEdit(env, { target, path, instructions, summary }) {
+  const repo = SITE_REPOS[target];
+  if (!repo) throw new Error(`Unknown target "${target}" \u2014 must be "website" or "dashboard"`);
+
+  const file = await githubRequest(env, `/repos/${repo}/contents/${path}`);
+  const currentContent = b64DecodeUtf8(file.content.replace(/\n/g, ""));
+
+  const edits = await draftFileEdits(env, currentContent, instructions);
+  const newContent = applyEdits(currentContent, edits);
+
+  const mainRef = await githubRequest(env, `/repos/${repo}/git/ref/heads/main`);
+  const branch = `hermes/${slugify(summary || instructions)}-${Date.now()}`;
+  await githubRequest(env, `/repos/${repo}/git/refs`, {
+    method: "POST",
+    body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: mainRef.object.sha })
+  });
+
+  await githubRequest(env, `/repos/${repo}/contents/${path}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      message: `Site Editor: ${summary || instructions}`,
+      content: b64EncodeUtf8(newContent),
+      sha: file.sha,
+      branch
+    })
+  });
+
+  const pr = await githubRequest(env, `/repos/${repo}/pulls`, {
+    method: "POST",
+    body: JSON.stringify({
+      title: `Site Editor: ${summary || instructions}`,
+      head: branch,
+      base: "main",
+      body: `Requested by Bryce via Hermes.\n\n**Instructions:** ${instructions}\n\nReview the diff and merge if it looks right, or close it and tell Hermes what to change.`
+    })
+  });
+
+  return pr.html_url;
+}
+
 // ---- Route handlers -------------------------------------------------------
 
 async function handleAsk(request, env) {
@@ -83,31 +238,69 @@ async function handleAsk(request, env) {
   // plain string, unlike classic Worker secrets.
   const apiKey = await env.ANTHROPIC_API_KEY.get();
 
-  const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-5",
-      max_tokens: 800,
-      system: HERMES_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: message }]
-    })
-  });
+  const tools = env.GITHUB_TOKEN ? [{
+    name: "propose_site_edit",
+    description: "Propose a change to spotlesslhc.com or the Hermes dashboard by opening a GitHub pull request. Never publishes directly \u2014 Bryce reviews and merges it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        target: { type: "string", enum: ["website", "dashboard"], description: "\"website\" for spotlesslhc.com, \"dashboard\" for Hermes itself" },
+        path: { type: "string", description: "File path in the repo, e.g. index.html or public/index.html" },
+        instructions: { type: "string", description: "Plain-language description of the change to make" },
+        summary: { type: "string", description: "Short (under 10 words) summary for the PR title and branch name" }
+      },
+      required: ["target", "path", "instructions", "summary"]
+    }
+  }] : undefined;
 
-  if (!apiRes.ok) {
-    const detail = await apiRes.text();
-    return json({ error: "Hermes couldn't reach the model", detail }, { status: 502 });
+  const messages = [{ role: "user", content: message }];
+  let reply = "";
+
+  for (let turn = 0; turn < 3; turn++) {
+    const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-5",
+        max_tokens: 1500,
+        system: HERMES_SYSTEM_PROMPT,
+        messages,
+        ...(tools ? { tools } : {})
+      })
+    });
+
+    if (!apiRes.ok) {
+      const detail = await apiRes.text();
+      return json({ error: "Hermes couldn't reach the model", detail }, { status: 502 });
+    }
+
+    const data = await apiRes.json();
+    reply = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+    const toolUse = (data.content || []).find((b) => b.type === "tool_use");
+
+    if (!toolUse) break;
+
+    messages.push({ role: "assistant", content: data.content });
+
+    let toolResult;
+    try {
+      const prUrl = await proposeSiteEdit(env, toolUse.input);
+      toolResult = `Pull request opened: ${prUrl}`;
+      await setStatus(env, { site_editor: { status: "attn", label: "Needs review", lastPublish: new Date().toISOString() } });
+      await appendLog(env, { who: "Site Editor", what: `Opened PR \u2014 ${toolUse.input.summary} (${prUrl})` });
+    } catch (err) {
+      toolResult = `Failed: ${err.message}`;
+    }
+
+    messages.push({
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: toolUse.id, content: toolResult }]
+    });
   }
-
-  const data = await apiRes.json();
-  const reply = (data.content || [])
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n");
 
   await appendLog(env, { who: "Hermes", what: message.slice(0, 140) });
 
