@@ -92,54 +92,76 @@ async function getWaveBusinessId(env) {
   return id;
 }
 
-// IMPORTANT \u2014 read before finishing this function:
-// The GraphQL field names below for the profit & loss style report are NOT
-// verified against Wave's live schema (only cross-referenced from third-party
-// docs, not Wave's own reference). Before this goes live: run an
-// introspection query against https://gql.waveapps.com/graphql/public with
-// the real WAVE_API_TOKEN (e.g. `{ __type(name: "Business") { fields { name } } }`
-// and drill into whatever the reports field is actually called) to confirm
-// the real query shape, then replace REPORT_QUERY below with the verified
-// version. Do not deploy this against production data until that's done.
-const REPORT_QUERY_NEEDS_VERIFICATION = true;
+// ---- Bookkeeper: monthly financials, entered manually ---------------------
+//
+// Wave's public GraphQL API turned out to have no way to read dated
+// transaction history at all (verified via full schema introspection \u2014
+// Transaction exposes only an id, Account.balance is a snapshot with no
+// date range). So instead of fabricating or guessing numbers, this stores
+// whatever Bryce actually tells it each month, straight from Wave's own
+// report screen, and does no automated fetching. Simple, honest, $0 cost.
 
-async function getFinanceSummary(env, months = 6) {
-  const businessId = await getWaveBusinessId(env);
-  const end = new Date();
-  const start = new Date(end.getFullYear(), end.getMonth() - (months - 1), 1);
-  const fmt = (d) => d.toISOString().slice(0, 10);
+function isValidMonth(month) {
+  return typeof month === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
+}
 
-  // Placeholder shape \u2014 see REPORT_QUERY_NEEDS_VERIFICATION above.
-  const data = await waveGraphQL(env, `
-    query ($businessId: ID!, $from: Date!, $to: Date!) {
-      business(id: $businessId) {
-        reports {
-          profitAndLoss(fromDate: $from, toDate: $to, subtotals: MONTHLY) {
-            income
-            expenses
-            netIncome
-          }
-        }
-      }
-    }
-  `, { businessId, from: fmt(start), to: fmt(end) });
+function monthLabel(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(y, m - 1, 1).toLocaleString("en-US", { month: "short" });
+}
 
-  // The exact shape of `data` above is unverified, so this mapping is a
-  // placeholder too \u2014 rewrite once the real query is confirmed to return
-  // the values the dashboard needs: months (labels), revenue[], expenses[],
-  // netMargin[] (as a 0\u20131 fraction per month), and totals.
-  throw new Error("getFinanceSummary: Wave report query not yet verified \u2014 see comment above REPORT_QUERY_NEEDS_VERIFICATION");
+async function listFinanceMonths(env, limit = 6) {
+  const list = await env.HERMES_KV.list({ prefix: "finance:month:" });
+  const keys = list.keys.map((k) => k.name).sort(); // "YYYY-MM" sorts correctly as a string
+  const recent = keys.slice(-limit);
+  const entries = [];
+  for (const key of recent) {
+    const raw = await env.HERMES_KV.get(key);
+    if (!raw) continue;
+    entries.push({ month: key.replace("finance:month:", ""), ...JSON.parse(raw) });
+  }
+  return entries;
+}
+
+async function getFinanceSummary(env) {
+  const entries = await listFinanceMonths(env, 6);
+  if (!entries.length) {
+    return { months: [], revenue: [], expenses: [], netMargin: [], totals: { revenue: 0, netIncome: 0, netMarginPct: 0 } };
+  }
+  const months = entries.map((e) => monthLabel(e.month));
+  const revenue = entries.map((e) => e.revenue);
+  const expenses = entries.map((e) => e.expenses);
+  const netMargin = entries.map((e) => (e.revenue > 0 ? (e.revenue - e.expenses) / e.revenue : 0));
+  const totalRevenue = revenue.reduce((a, b) => a + b, 0);
+  const totalExpenses = expenses.reduce((a, b) => a + b, 0);
+  const netIncome = totalRevenue - totalExpenses;
+  return {
+    months, revenue, expenses, netMargin,
+    totals: { revenue: totalRevenue, netIncome, netMarginPct: totalRevenue > 0 ? netIncome / totalRevenue : 0 }
+  };
+}
+
+async function recordFinanceMonth(env, { month, revenue, expenses }) {
+  if (!isValidMonth(month)) throw new Error('month must be in "YYYY-MM" format');
+  if (typeof revenue !== "number" || revenue < 0) throw new Error("revenue must be a non-negative number");
+  if (typeof expenses !== "number" || expenses < 0) throw new Error("expenses must be a non-negative number");
+  await env.HERMES_KV.put(`finance:month:${month}`, JSON.stringify({ revenue, expenses }));
+  await appendLog(env, { who: "Bookkeeper", what: `Recorded ${monthLabel(month)} ${month.slice(0, 4)} financials \u2014 revenue $${revenue.toLocaleString()}, expenses $${expenses.toLocaleString()}` });
+  return getFinanceSummary(env);
 }
 
 async function handleFinance(env) {
-  if (!env.WAVE_API_TOKEN) {
-    return json({ error: "WAVE_API_TOKEN not bound" }, { status: 501 });
-  }
+  return json(await getFinanceSummary(env));
+}
+
+async function handleFinanceEntry(request, env) {
+  let body;
+  try { body = await request.json(); } catch (e) { return json({ error: "Invalid JSON" }, { status: 400 }); }
   try {
-    const summary = await getFinanceSummary(env);
-    return json(summary);
+    const summary = await recordFinanceMonth(env, body || {});
+    return json({ ok: true, summary });
   } catch (err) {
-    return json({ error: err.message }, { status: 502 });
+    return json({ error: err.message }, { status: 400 });
   }
 }
 
@@ -324,20 +346,36 @@ async function handleAsk(request, env) {
   // plain string, unlike classic Worker secrets.
   const apiKey = await env.ANTHROPIC_API_KEY.get();
 
-  const tools = env.GITHUB_TOKEN ? [{
-    name: "propose_site_edit",
-    description: "Propose a change to spotlesslhc.com or the Hermes dashboard by opening a GitHub pull request. Never publishes directly \u2014 Bryce reviews and merges it.",
+  const tools = [];
+  if (env.GITHUB_TOKEN) {
+    tools.push({
+      name: "propose_site_edit",
+      description: "Propose a change to spotlesslhc.com or the Hermes dashboard by opening a GitHub pull request. Never publishes directly \u2014 Bryce reviews and merges it.",
+      input_schema: {
+        type: "object",
+        properties: {
+          target: { type: "string", enum: ["website", "dashboard"], description: "\"website\" for spotlesslhc.com, \"dashboard\" for Hermes itself" },
+          path: { type: "string", description: "File path in the repo, e.g. index.html or public/index.html" },
+          instructions: { type: "string", description: "Plain-language description of the change to make" },
+          summary: { type: "string", description: "Short (under 10 words) summary for the PR title and branch name" }
+        },
+        required: ["target", "path", "instructions", "summary"]
+      }
+    });
+  }
+  tools.push({
+    name: "record_monthly_finance",
+    description: "Record Bryce's revenue and expenses for one month, straight from what he tells you (he reads these off Wave's own report screen). Stores them directly \u2014 no approval needed, since these are numbers he's stating himself, not something you're inferring.",
     input_schema: {
       type: "object",
       properties: {
-        target: { type: "string", enum: ["website", "dashboard"], description: "\"website\" for spotlesslhc.com, \"dashboard\" for Hermes itself" },
-        path: { type: "string", description: "File path in the repo, e.g. index.html or public/index.html" },
-        instructions: { type: "string", description: "Plain-language description of the change to make" },
-        summary: { type: "string", description: "Short (under 10 words) summary for the PR title and branch name" }
+        month: { type: "string", description: "The month as YYYY-MM, e.g. \"2026-09\" for September 2026" },
+        revenue: { type: "number", description: "Total revenue for that month, in dollars" },
+        expenses: { type: "number", description: "Total expenses for that month, in dollars" }
       },
-      required: ["target", "path", "instructions", "summary"]
+      required: ["month", "revenue", "expenses"]
     }
-  }] : undefined;
+  });
 
   const messages = [{ role: "user", content: message }];
   let reply = "";
@@ -374,10 +412,17 @@ async function handleAsk(request, env) {
 
     let toolResult;
     try {
-      const prUrl = await proposeSiteEdit(env, toolUse.input);
-      toolResult = `Pull request opened: ${prUrl}`;
-      await setStatus(env, { site_editor: { status: "attn", label: "Needs review", lastPublish: new Date().toISOString() } });
-      await appendLog(env, { who: "Site Editor", what: `Opened PR \u2014 ${toolUse.input.summary} (${prUrl})` });
+      if (toolUse.name === "propose_site_edit") {
+        const prUrl = await proposeSiteEdit(env, toolUse.input);
+        toolResult = `Pull request opened: ${prUrl}`;
+        await setStatus(env, { site_editor: { status: "attn", label: "Needs review", lastPublish: new Date().toISOString() } });
+        await appendLog(env, { who: "Site Editor", what: `Opened PR \u2014 ${toolUse.input.summary} (${prUrl})` });
+      } else if (toolUse.name === "record_monthly_finance") {
+        const summary = await recordFinanceMonth(env, toolUse.input);
+        toolResult = `Recorded. Updated totals: revenue $${Math.round(summary.totals.revenue).toLocaleString()}, net income $${Math.round(summary.totals.netIncome).toLocaleString()}, margin ${Math.round(summary.totals.netMarginPct * 100)}%.`;
+      } else {
+        toolResult = `Unknown tool: ${toolUse.name}`;
+      }
     } catch (err) {
       toolResult = `Failed: ${err.message}`;
     }
@@ -447,6 +492,9 @@ export default {
     }
     if (pathname === "/api/finance" && method === "GET") {
       return handleFinance(env);
+    }
+    if (pathname === "/api/finance" && method === "POST") {
+      return handleFinanceEntry(request, env);
     }
     if (pathname === "/api/ask" && method === "POST") {
       return handleAsk(request, env);

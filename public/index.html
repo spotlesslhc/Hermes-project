@@ -145,6 +145,25 @@
     font-size:22px; letter-spacing:0.2px;
   }
   .section-head .hint{font-size:12.5px; color:var(--ink-soft);}
+  .section-head-right{display:flex; align-items:center; gap:14px;}
+
+  .finance-entry{
+    display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px;
+    background:var(--paper-raised); border:1px solid var(--line);
+    border-radius:4px; padding:14px 16px; margin-bottom:14px;
+  }
+  .finance-entry label{
+    display:flex; flex-direction:column; gap:4px;
+    font-size:12.5px; color:var(--ink-soft);
+  }
+  .finance-entry input{
+    background:var(--paper); border:1px solid var(--line-strong);
+    border-radius:3px; padding:7px 9px; color:var(--ink);
+    font-family:'Work Sans', sans-serif; font-size:13.5px; min-width:130px;
+  }
+  .finance-entry-msg{font-size:12.5px; color:var(--ink-soft);}
+  .finance-entry-msg.ok{color:var(--green);}
+  .finance-entry-msg.err{color:var(--red);}
 
   /* Agents grid — asymmetric, not uniform cards */
   .agents{
@@ -437,8 +456,25 @@
 
   <div class="section-head">
     <h2>Financial Snapshot</h2>
-    <div class="hint" id="financeHint">Preview data — connect Bookkeeper to Wave to see real numbers</div>
+    <div class="section-head-right">
+      <div class="hint" id="financeHint">Preview data — add this month's numbers to see real ones</div>
+      <button type="button" class="btn" id="financeAddBtn">+ Add this month</button>
+    </div>
   </div>
+
+  <form class="finance-entry" id="financeEntryForm" hidden>
+    <label>Month
+      <input type="month" id="feMonth" required>
+    </label>
+    <label>Revenue ($)
+      <input type="number" id="feRevenue" min="0" step="0.01" required>
+    </label>
+    <label>Expenses ($)
+      <input type="number" id="feExpenses" min="0" step="0.01" required>
+    </label>
+    <button class="btn primary" type="submit">Save</button>
+    <span class="finance-entry-msg" id="feMsg"></span>
+  </form>
 
   <div class="finance-stats" id="financeStats">
     <div class="fstat">
@@ -787,6 +823,50 @@
     startWake();
   })();
 
+  (function setUpFinanceEntry(){
+    const btn = document.getElementById('financeAddBtn');
+    const form = document.getElementById('financeEntryForm');
+    const msg = document.getElementById('feMsg');
+    if(!btn || !form) return;
+
+    const monthInput = document.getElementById('feMonth');
+    const now = new Date();
+    monthInput.value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+
+    btn.addEventListener('click', () => {
+      form.hidden = !form.hidden;
+      btn.textContent = form.hidden ? '+ Add this month' : 'Cancel';
+    });
+
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      msg.textContent = 'Saving…';
+      msg.className = 'finance-entry-msg';
+      const payload = {
+        month: monthInput.value,
+        revenue: parseFloat(document.getElementById('feRevenue').value),
+        expenses: parseFloat(document.getElementById('feExpenses').value)
+      };
+      try{
+        const res = await fetch('/api/finance', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if(!res.ok) throw new Error(data.error || 'Save failed');
+        msg.textContent = 'Saved.';
+        msg.className = 'finance-entry-msg ok';
+        form.hidden = true;
+        btn.textContent = '+ Add this month';
+        loadFinance();
+      }catch(e){
+        msg.textContent = e.message;
+        msg.className = 'finance-entry-msg err';
+      }
+    });
+  })();
+
   async function loadFinance(){
     try{
       const res = await fetch('/api/finance');
@@ -794,7 +874,7 @@
       const data = await res.json();
       if(!data || !data.months || !data.months.length) return;
 
-      document.getElementById('financeHint').textContent = 'Live from Wave';
+      document.getElementById('financeHint').textContent = 'From your monthly entries';
       const fmtMoney = (n) => '$' + Math.round(n).toLocaleString();
       document.getElementById('fRevenue').textContent = fmtMoney(data.totals.revenue);
       document.getElementById('fNetIncome').textContent = fmtMoney(data.totals.netIncome);
