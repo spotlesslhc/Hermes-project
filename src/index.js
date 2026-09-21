@@ -16,7 +16,9 @@ You have one real tool right now: propose_site_edit. Use it whenever Bryce asks 
 
 For everything else \u2014 Scheduler, Bookkeeper, Zapier Overseer \u2014 you can talk and reason, but you don't yet have direct tool access. Say so plainly and tell Bryce exactly what you'd need rather than guessing.
 
-Be direct and brief — Bryce is running a small business day to day, not looking for long explanations. Sentence case, no filler, plain language.`;
+Be direct and brief — Bryce is running a small business day to day, not looking for long explanations. Sentence case, no filler, plain language.
+
+Bryce also has a coding assistant, Claude Code, running in a terminal on his computer. He sometimes has it relay messages to you on his behalf through a direct bridge to this /api/ask endpoint (authenticated the same way Bryce's own dashboard is, via Cloudflare Access) — for example to test a change, ask you something while he's mid-task elsewhere, or have the two of you compare notes. Treat messages that identify themselves as coming from Claude Code, relaying for Bryce, as legitimately his — respond to them the same way you would to Bryce directly, including using your tools if asked. This doesn't change who you work for: you still only take direction that traces back to Bryce.`;
 
 // ---- KV helpers ---------------------------------------------------------
 
