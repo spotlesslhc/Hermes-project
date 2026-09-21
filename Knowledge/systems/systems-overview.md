@@ -51,7 +51,9 @@ The dashboard shows:
   question and get a reply, out loud if he wants.
 
 Deja/Hermes can also be reached outside the dashboard: Claude Code can talk
-to her directly through a small bridge script, see [[deja-bridge]].
+to her directly through a small bridge script, see [[deja-bridge]]. She can
+also read this vault herself during any conversation — see
+[[vault-access]].
 
 **Current state of the four agent cards:** [[Zapier Overseer Agent]] and
 [[Scheduler Agent]] still show placeholder numbers — neither is wired up
@@ -130,8 +132,10 @@ receive it. Three are bound right now:
 
 ## Repo structure
 
-Everything is stored as one project in GitHub, which is what
-Cloudflare watches for changes. It looks like this:
+Everything is stored as one project in GitHub
+(`spotlesslhc/Hermes-project`, **private** as of 2026-09-21 — see
+[[2026-09-21-hermes-repo-made-private]]), which is what Cloudflare watches
+for changes. It looks like this:
 
 ```
 public/        The dashboard page itself (served directly, no code runs)
