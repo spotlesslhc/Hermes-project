@@ -30,6 +30,19 @@ directly to [[Deja]]/Hermes's `/api/ask`, the same endpoint the dashboard's
   (currently Claude Code) is responsible for including prior turns as
   context inside the message text it sends.
 
+## Direction of contact
+
+This is a request/response bridge, not a persistent connection: Claude Code
+always has to send the message first, and Deja can only reply within that
+same HTTP response — she has no way to initiate contact back. There's no
+listener on Claude Code's side for her to call, and a Cloudflare Worker
+can't reach out to a local terminal session on its own. If she's asked
+whether she can contact Claude Code first, "no, only reply" is the correct
+answer, not a bug — worth remembering so this doesn't get re-investigated
+as if it were broken. Making her able to initiate contact would need a real
+architecture change (something on Bryce's machine listening and staying
+running), which hasn't been decided on.
+
 ## The trust decision
 
 The first test of this bridge failed in an informative way: Hermes replied
