@@ -58,11 +58,89 @@ async function getLog(env, limit = 30) {
   return log.slice(-limit).reverse();
 }
 
-function json(data, init = {}) {
+async function json(data, init = {}) {
   return new Response(JSON.stringify(data), {
     ...init,
     headers: { "content-type": "application/json", ...(init.headers || {}) }
   });
+}
+
+// ---- Bookkeeper: Wave GraphQL -------------------------------------------
+
+async function waveGraphQL(env, query, variables = {}) {
+  const token = await env.WAVE_API_TOKEN.get();
+  const res = await fetch("https://gql.waveapps.com/graphql/public", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "authorization": `Bearer ${token}`
+    },
+    body: JSON.stringify({ query, variables })
+  });
+  const body = await res.json();
+  if (body.errors) throw new Error("Wave API error: " + JSON.stringify(body.errors));
+  return body.data;
+}
+
+async function getWaveBusinessId(env) {
+  const cached = await env.HERMES_KV.get("wave:business_id");
+  if (cached) return cached;
+  const data = await waveGraphQL(env, `query { businesses { edges { node { id name } } } }`);
+  const id = data.businesses?.edges?.[0]?.node?.id;
+  if (!id) throw new Error("No Wave business found for this token");
+  await env.HERMES_KV.put("wave:business_id", id);
+  return id;
+}
+
+// IMPORTANT \u2014 read before finishing this function:
+// The GraphQL field names below for the profit & loss style report are NOT
+// verified against Wave's live schema (only cross-referenced from third-party
+// docs, not Wave's own reference). Before this goes live: run an
+// introspection query against https://gql.waveapps.com/graphql/public with
+// the real WAVE_API_TOKEN (e.g. `{ __type(name: "Business") { fields { name } } }`
+// and drill into whatever the reports field is actually called) to confirm
+// the real query shape, then replace REPORT_QUERY below with the verified
+// version. Do not deploy this against production data until that's done.
+const REPORT_QUERY_NEEDS_VERIFICATION = true;
+
+async function getFinanceSummary(env, months = 6) {
+  const businessId = await getWaveBusinessId(env);
+  const end = new Date();
+  const start = new Date(end.getFullYear(), end.getMonth() - (months - 1), 1);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+
+  // Placeholder shape \u2014 see REPORT_QUERY_NEEDS_VERIFICATION above.
+  const data = await waveGraphQL(env, `
+    query ($businessId: ID!, $from: Date!, $to: Date!) {
+      business(id: $businessId) {
+        reports {
+          profitAndLoss(fromDate: $from, toDate: $to, subtotals: MONTHLY) {
+            income
+            expenses
+            netIncome
+          }
+        }
+      }
+    }
+  `, { businessId, from: fmt(start), to: fmt(end) });
+
+  // The exact shape of `data` above is unverified, so this mapping is a
+  // placeholder too \u2014 rewrite once the real query is confirmed to return
+  // the values the dashboard needs: months (labels), revenue[], expenses[],
+  // netMargin[] (as a 0\u20131 fraction per month), and totals.
+  throw new Error("getFinanceSummary: Wave report query not yet verified \u2014 see comment above REPORT_QUERY_NEEDS_VERIFICATION");
+}
+
+async function handleFinance(env) {
+  if (!env.WAVE_API_TOKEN) {
+    return json({ error: "WAVE_API_TOKEN not bound" }, { status: 501 });
+  }
+  try {
+    const summary = await getFinanceSummary(env);
+    return json(summary);
+  } catch (err) {
+    return json({ error: err.message }, { status: 502 });
+  }
 }
 
 // ---- Site Editor: GitHub PR flow ------------------------------------------
@@ -366,6 +444,9 @@ export default {
     }
     if (pathname === "/api/log" && method === "GET") {
       return json(await getLog(env, 30));
+    }
+    if (pathname === "/api/finance" && method === "GET") {
+      return handleFinance(env);
     }
     if (pathname === "/api/ask" && method === "POST") {
       return handleAsk(request, env);
