@@ -188,6 +188,14 @@ async function proposeSiteEdit(env, { target, path, instructions, summary }) {
   const edits = await draftFileEdits(env, currentContent, instructions);
   const newContent = applyEdits(currentContent, edits);
 
+  if (newContent === currentContent) {
+    throw new Error(
+      "No changes were made \u2014 the requested edit didn't actually alter the file. " +
+      "This usually means the target text wasn't found, or it was already in the requested state. " +
+      "Tell Bryce this plainly instead of claiming success, and ask him to double-check the wording of what he wants changed."
+    );
+  }
+
   const mainRef = await githubRequest(env, `/repos/${repo}/git/ref/heads/main`);
   const branch = `hermes/${slugify(summary || instructions)}-${Date.now()}`;
   await githubRequest(env, `/repos/${repo}/git/refs`, {
