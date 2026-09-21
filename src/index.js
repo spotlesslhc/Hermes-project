@@ -14,6 +14,8 @@ Bryce Wiesner owns the business and talks to you directly through his dashboard.
 
 You have one real tool right now: propose_site_edit. Use it whenever Bryce asks for a change to the website or dashboard \u2014 a wording tweak, a price update, a new section, a bug fix in the dashboard's own code. It does not publish anything directly: it reads the current file from GitHub, drafts the new version, and opens a pull request for Bryce to review and merge himself. Always tell him plainly that it's a PR waiting on his review, not a live change, and give him the PR link from the tool result.
 
+You also have read access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. This access is read-only: if a vault note itself needs to change, that still goes through propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it like any other edit.
+
 For everything else \u2014 Scheduler, Bookkeeper, Zapier Overseer \u2014 you can talk and reason, but you don't yet have direct tool access. Say so plainly and tell Bryce exactly what you'd need rather than guessing.
 
 Be direct and brief — Bryce is running a small business day to day, not looking for long explanations. Sentence case, no filler, plain language.
@@ -328,6 +330,35 @@ async function proposeSiteEdit(env, { target, path, instructions, summary }) {
   return pr.html_url;
 }
 
+// ---- Knowledge vault: read-only access to the shared Obsidian vault ------
+//
+// The vault (Knowledge/ in the dashboard repo) is the same repo
+// propose_site_edit already writes to via a PR, so vault edits still go
+// through that review flow — these two tools only ever read.
+
+function assertVaultPath(path) {
+  if (typeof path !== "string" || !path.startsWith("Knowledge/") || path.includes("..")) {
+    throw new Error('path must start with "Knowledge/" and must not contain ".."');
+  }
+}
+
+async function listVaultNotes(env) {
+  const repo = SITE_REPOS.dashboard;
+  const mainRef = await githubRequest(env, `/repos/${repo}/git/ref/heads/main`);
+  const tree = await githubRequest(env, `/repos/${repo}/git/trees/${mainRef.object.sha}?recursive=1`);
+  return (tree.tree || [])
+    .filter((entry) => entry.type === "blob" && entry.path.startsWith("Knowledge/") && entry.path.endsWith(".md"))
+    .map((entry) => entry.path);
+}
+
+async function readVaultNote(env, path) {
+  assertVaultPath(path);
+  const repo = SITE_REPOS.dashboard;
+  const file = await githubRequest(env, `/repos/${repo}/contents/${path}`);
+  if (Array.isArray(file)) throw new Error(`"${path}" is a folder, not a note`);
+  return b64DecodeUtf8(file.content.replace(/\n/g, ""));
+}
+
 // ---- Route handlers -------------------------------------------------------
 
 async function handleAsk(request, env) {
@@ -366,6 +397,20 @@ async function handleAsk(request, env) {
     });
   }
   tools.push({
+    name: "list_vault_notes",
+    description: "List every note in the shared Obsidian knowledge vault (Knowledge/ in the dashboard repo) — how the business and Hermes system actually work, plus dated decision records. Returns a list of file paths. Use this before read_vault_note if you don't already know the exact path.",
+    input_schema: { type: "object", properties: {}, required: [] }
+  });
+  tools.push({
+    name: "read_vault_note",
+    description: "Read one note from the shared knowledge vault by its path (e.g. \"Knowledge/systems/wave-integration.md\"), as returned by list_vault_notes. Use this to ground answers about the business, past decisions, or how a system works in what's actually documented, instead of guessing or relying only on this system prompt.",
+    input_schema: {
+      type: "object",
+      properties: { path: { type: "string", description: "Vault file path, must start with \"Knowledge/\"" } },
+      required: ["path"]
+    }
+  });
+  tools.push({
     name: "record_monthly_finance",
     description: "Record Bryce's revenue and expenses for one month, straight from what he tells you (he reads these off Wave's own report screen). Stores them directly \u2014 no approval needed, since these are numbers he's stating himself, not something you're inferring.",
     input_schema: {
@@ -382,7 +427,7 @@ async function handleAsk(request, env) {
   const messages = [{ role: "user", content: message }];
   let reply = "";
 
-  for (let turn = 0; turn < 3; turn++) {
+  for (let turn = 0; turn < 5; turn++) {
     const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -422,6 +467,11 @@ async function handleAsk(request, env) {
       } else if (toolUse.name === "record_monthly_finance") {
         const summary = await recordFinanceMonth(env, toolUse.input);
         toolResult = `Recorded. Updated totals: revenue $${Math.round(summary.totals.revenue).toLocaleString()}, net income $${Math.round(summary.totals.netIncome).toLocaleString()}, margin ${Math.round(summary.totals.netMarginPct * 100)}%.`;
+      } else if (toolUse.name === "list_vault_notes") {
+        const files = await listVaultNotes(env);
+        toolResult = files.length ? files.join("\n") : "No notes found in Knowledge/.";
+      } else if (toolUse.name === "read_vault_note") {
+        toolResult = await readVaultNote(env, toolUse.input.path);
       } else {
         toolResult = `Unknown tool: ${toolUse.name}`;
       }
