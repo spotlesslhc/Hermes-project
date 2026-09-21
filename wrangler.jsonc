@@ -23,6 +23,11 @@
       "binding": "GITHUB_TOKEN",
       "store_id": "8f15d6429b5741f9ac32e05415413a65",
       "secret_name": "GITHUB_TOKEN"
+    },
+    {
+      "binding": "WAVE_API_TOKEN",
+      "store_id": "8f15d6429b5741f9ac32e05415413a65",
+      "secret_name": "WAVE_API_TOKEN"
     }
   ]
 }
