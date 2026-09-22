@@ -68,12 +68,14 @@ also read this vault herself during any conversation — see
 to actually watch Zapier or assign cleaners yet. [[Bookkeeper Agent]] and
 [[Site Editor Agent]] are the two real ones: Bookkeeper can record and
 read monthly financials (see [[wave-integration]]), and Site Editor can
-open real PRs via `propose_site_edit` (see [[site-editor]]). "Talk to
-Deja" is also fully real — it sends the question to Claude and shows a
-genuine reply, calling `propose_site_edit` or `record_monthly_finance`
-itself when asked, or queuing the action for approval instead if it's ever
-a tool risky enough to need that (see [[approval-queue]] — nothing today
-actually is).
+either open real PRs itself via `propose_site_edit` (see [[site-editor]])
+or, as of 2026-09-21 and now the default, hand the edit off to Claude Code
+via `queue_edit_request` instead — free, but not instant, see
+[[2026-09-21-claude-code-task-queue]]. "Talk to Deja" is also fully real —
+it sends the question to Claude and shows a genuine reply, calling
+whichever tool fits, or queuing the action for approval instead if it's
+ever a tool risky enough to need that (see [[approval-queue]] — nothing
+today actually is).
 
 ## The Cloudflare Worker (the backend)
 
@@ -211,6 +213,6 @@ that yet.
   Access, and automated requests (like testing) need an Access Service
   Token.
 - The [[approval-queue]] framework is fully built and tested but currently
-  gates nothing — none of Hermes' three real tools are risky enough to
+  gates nothing — none of Hermes' real tools are risky enough to
   need it. It's there for whenever a real risky tool (payments, calendar
   writes, anything hard to reverse) gets added.
