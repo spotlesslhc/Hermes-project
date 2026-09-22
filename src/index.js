@@ -601,28 +601,34 @@ async function handleAsk(request, env) {
 
     const data = await apiRes.json();
     reply = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
-    const toolUse = (data.content || []).find((b) => b.type === "tool_use");
+    const toolUses = (data.content || []).filter((b) => b.type === "tool_use");
 
-    if (!toolUse) break;
+    if (!toolUses.length) break;
 
     messages.push({ role: "assistant", content: data.content });
 
-    let toolResult;
-    if (APPROVAL_REQUIRED_TOOLS.has(toolUse.name)) {
-      const pending = await createPendingAction(env, { tool: toolUse.name, input: toolUse.input });
-      toolResult = `This requires Bryce's approval before it runs. Queued on the dashboard as pending action #${pending.id.slice(0, 8)}. Tell him plainly you're waiting on his review there \u2014 don't say it's done.`;
-    } else {
-      try {
-        toolResult = await dispatchTool(env, toolUse.name, toolUse.input);
-      } catch (err) {
-        toolResult = `Failed: ${err.message}`;
+    // Claude can call more than one tool in a single turn (e.g. Deja checking
+    // list_vault_notes and read_vault_note back to back). Every tool_use here
+    // needs a matching tool_result in the SAME next message, or the API
+    // rejects the whole conversation on the next turn \u2014 so resolve them all
+    // before pushing anything back.
+    const toolResults = [];
+    for (const toolUse of toolUses) {
+      let toolResult;
+      if (APPROVAL_REQUIRED_TOOLS.has(toolUse.name)) {
+        const pending = await createPendingAction(env, { tool: toolUse.name, input: toolUse.input });
+        toolResult = `This requires Bryce's approval before it runs. Queued on the dashboard as pending action #${pending.id.slice(0, 8)}. Tell him plainly you're waiting on his review there \u2014 don't say it's done.`;
+      } else {
+        try {
+          toolResult = await dispatchTool(env, toolUse.name, toolUse.input);
+        } catch (err) {
+          toolResult = `Failed: ${err.message}`;
+        }
       }
+      toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: toolResult });
     }
 
-    messages.push({
-      role: "user",
-      content: [{ type: "tool_result", tool_use_id: toolUse.id, content: toolResult }]
-    });
+    messages.push({ role: "user", content: toolResults });
   }
 
   await appendLog(env, { who: "Hermes", what: message.slice(0, 140) });

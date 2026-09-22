@@ -89,6 +89,23 @@
     font-size:clamp(22px,4vw,32px); letter-spacing:1px;
     color:var(--ink-soft); margin-top:6px;
   }
+  .float-btn{
+    display:flex; align-items:center; gap:6px; margin-top:12px;
+    font-family:inherit; font-size:12px; font-weight:500;
+    background:var(--paper-raised); border:1px solid var(--line);
+    color:var(--ink-soft); padding:6px 14px; border-radius:20px;
+    cursor:pointer; transition: border-color .15s, color .15s;
+  }
+  .float-btn:hover{ color:var(--ink); border-color:var(--teal); }
+  .float-btn[hidden]{ display:none; }
+
+  /* Compact layout used only inside the floating Picture-in-Picture window
+     — the orb-section gets physically moved in there, see setUpFloatingOrb. */
+  body.pip-orb{ margin:0; padding:0; background:var(--paper); overflow:hidden; }
+  body.pip-orb .orb-section{ padding:0; height:100vh; justify-content:center; }
+  body.pip-orb .orb-wrap{ width:82vmin; max-width:none; height:82vmin; min-height:0; }
+  body.pip-orb .orb-label{ font-size:16px; margin-top:4px; }
+  body.pip-orb .float-btn{ display:none; }
   .theme-btn{
     display:flex; align-items:center; justify-content:center;
     width:30px; height:30px; border-radius:50%;
@@ -328,6 +345,7 @@
       <canvas id="orbCanvas"></canvas>
     </div>
     <div class="orb-label">Deja</div>
+    <button type="button" class="float-btn" id="floatOrbBtn" title="Keep Deja's orb floating on top of other windows">Float Deja on top</button>
   </div>
 
   <div class="section-head">
@@ -1309,8 +1327,78 @@
     }
 
     resize();
+    window.dejaOrbResize = resize;
     window.addEventListener('resize', resize);
     requestAnimationFrame(frame);
+  })();
+
+  // Floating orb: pops the orb (and its glow-on-listening/speaking state,
+  // already wired through dejaOrbSetState) into a real floating window via
+  // Chrome/Edge's Document Picture-in-Picture API, which stays visible on
+  // top of other applications as long as this browser keeps running in the
+  // background — Chrome-only, and needs a real click to open (browsers won't
+  // let a page pop a floating window open on its own). The actual listening/
+  // talking logic already runs independently of which tab is focused; this
+  // just gives it a persistent visual home instead of an invisible one.
+  (function setUpFloatingOrb(){
+    const btn = document.getElementById('floatOrbBtn');
+    const orbSection = document.querySelector('.orb-section');
+    if(!btn || !orbSection || !('documentPictureInPicture' in window)){
+      if(btn) btn.hidden = true;
+      return;
+    }
+
+    const originalParent = orbSection.parentNode;
+    const originalNext = orbSection.nextSibling;
+    let pipWindow = null;
+
+    // Keep the floating window's theme in sync if you switch light/dark
+    // while it's open, without needing setUpTheme to know PiP exists at all.
+    new MutationObserver(() => {
+      if(!pipWindow) return;
+      if(document.documentElement.hasAttribute('data-theme')){
+        pipWindow.document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme'));
+      } else {
+        pipWindow.document.documentElement.removeAttribute('data-theme');
+      }
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+    function copyStylesInto(doc){
+      document.querySelectorAll('style, link[rel="stylesheet"]').forEach((node) => {
+        doc.head.append(node.cloneNode(true));
+      });
+    }
+
+    function exitFloating(){
+      if(originalNext){ originalParent.insertBefore(orbSection, originalNext); }
+      else { originalParent.append(orbSection); }
+      if(window.dejaOrbResize) window.dejaOrbResize();
+      pipWindow = null;
+      btn.textContent = 'Float Deja on top';
+    }
+
+    async function enterFloating(){
+      try{
+        pipWindow = await documentPictureInPicture.requestWindow({ width: 220, height: 260 });
+      }catch(e){
+        return; // permission prompt dismissed, or PiP unavailable right now
+      }
+      copyStylesInto(pipWindow.document);
+      if(document.documentElement.hasAttribute('data-theme')){
+        pipWindow.document.documentElement.setAttribute('data-theme', document.documentElement.getAttribute('data-theme'));
+      }
+      pipWindow.document.body.className = 'pip-orb';
+      pipWindow.document.body.append(orbSection);
+      if(window.dejaOrbResize) window.dejaOrbResize();
+      pipWindow.addEventListener('resize', () => { if(window.dejaOrbResize) window.dejaOrbResize(); });
+      pipWindow.addEventListener('pagehide', exitFloating, { once: true });
+      btn.textContent = 'Floating — click to bring back';
+    }
+
+    btn.addEventListener('click', () => {
+      if(pipWindow){ try{ pipWindow.close(); }catch(e){} }
+      else { enterFloating(); }
+    });
   })();
 
   // Theme toggle — dark is the default; a saved choice of light overrides it
