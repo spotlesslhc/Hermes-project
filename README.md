@@ -62,6 +62,30 @@ here (Workers). The default `npx wrangler deploy` is correct.
    **secret** (not a plain variable) so it stays hidden.
 4. Redeploy.
 
+## 4b. (Optional) Give Deja a real voice via ElevenLabs
+
+Without this, Deja falls back to the browser's built-in text-to-speech —
+everything still works, it just sounds robotic.
+
+1. Create an account at **elevenlabs.io** and generate an API key.
+2. In your project → **Settings → Variables and Secrets → Add.** Name it
+   `ELEVENLABS_API_KEY`, paste the key as the value, mark it a **secret**.
+3. In `wrangler.jsonc`, add the binding entry for it to `secrets_store_secrets`
+   (same shape as the other three entries there — there's a comment marking
+   where it goes). This is a separate, deliberate step from creating the
+   secret itself — the binding is left out of the code until the secret
+   actually exists, so a not-yet-created secret can't break deployment of
+   everything else.
+4. Pick a voice (elevenlabs.io/app/voice-library) and set its voice ID as
+   `ELEVENLABS_VOICE_ID` near the top of `src/index.js` — it's a placeholder
+   default until you do this.
+5. Redeploy. `/api/speak` will start using the real voice automatically;
+   nothing else needs to change.
+
+`HERMES_DEBUG_TOOLS` in `wrangler.jsonc` is a plain (non-secret) variable,
+always `"false"` in production — it only matters for local testing (see
+`npx wrangler dev --var HERMES_DEBUG_TOOLS:true`), don't turn it on live.
+
 ## 5. Point Zapier at the reservation webhook
 
 Add one more step to your existing reservation Zap, after the Google
