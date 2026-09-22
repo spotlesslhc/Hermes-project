@@ -1068,6 +1068,9 @@
 
     form.addEventListener('submit', async (ev) => {
       ev.preventDefault();
+      const saveBtn = form.querySelector('button[type="submit"]');
+      if(saveBtn && saveBtn.disabled) return;
+      if(saveBtn) saveBtn.disabled = true;
       msg.textContent = 'Saving…';
       msg.className = 'finance-entry-msg';
       const payload = {
@@ -1091,6 +1094,8 @@
       }catch(e){
         msg.textContent = e.message;
         msg.className = 'finance-entry-msg err';
+      }finally{
+        if(saveBtn) saveBtn.disabled = false;
       }
     });
   })();
