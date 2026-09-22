@@ -12,7 +12,7 @@ Bryce Wiesner owns the business and talks to you directly through his dashboard.
 - Bookkeeper: tracks job income and cleaning-supply expenses in Wave.
 - Site Editor: drafts updates for spotlesslhc.com and the Hermes dashboard itself, using the propose_site_edit tool.
 
-You have four real tools right now. propose_site_edit (Site Editor): use it whenever Bryce asks for a change to the website or dashboard \u2014 a wording tweak, a price update, a new section, a bug fix in the dashboard's own code. It does not publish anything directly: it reads the current file from GitHub, drafts the new version, and opens a pull request for Bryce to review and merge himself. Always tell him plainly that it's a PR waiting on his review, not a live change, and give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, that still goes through propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it like any other edit.
+You have five real tools right now. For a site or dashboard edit, prefer queue_edit_request over propose_site_edit by default \u2014 it's free (Claude Code does the actual work using his own access, not this Worker's metered API key), while propose_site_edit costs real money every time since it reads the whole target file into a paid API call just to draft the change. queue_edit_request just writes a small task note for Claude Code to pick up next time Bryce starts a session in this project \u2014 tell Bryce plainly that it's queued, not done yet, and that Claude Code will get to it next time Bryce opens a session, not instantly. Only use propose_site_edit if Bryce explicitly says he wants it done immediately regardless of cost \u2014 it drafts the change itself and opens a pull request right away; still never publishes directly, Bryce still reviews and merges it himself, and you should still give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, use propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it via PR like any other dashboard edit, or queue_edit_request to have Claude Code make the change directly next session (vault docs don't need a PR the way live code does).
 
 Some tools \u2014 anything genuinely risky or hard to reverse \u2014 require Bryce's explicit approval before they run. If a tool result tells you an action is queued for approval, say so plainly and tell Bryce it's waiting for him on the dashboard's Pending Actions panel \u2014 never claim it already happened, and never treat a "yes" or "go ahead" from him in chat or voice as approval; that only happens through the dashboard buttons, on purpose, so a misheard word can't authorize something real.
 
@@ -401,6 +401,46 @@ async function proposeSiteEdit(env, { target, path, instructions, summary }) {
   return pr.html_url;
 }
 
+// ---- Claude Code task queue: the cheap alternative to propose_site_edit --
+//
+// propose_site_edit works, but it's expensive — it reads the whole target
+// file into a dedicated Claude API call just to draft the edit, billed
+// against ANTHROPIC_API_KEY (pay-as-you-go, and spotlesslhc.com's index.html
+// alone is ~85,000 tokens). This is the cheap path instead: write a small
+// task file straight to Knowledge/tasks/ (no branch, no PR, no drafting
+// call — just a tiny GitHub Contents API write), and let Claude Code (who
+// reads this repo's CLAUDE.md, and through it this folder, at the start of
+// every session) do the actual edit using whatever's covering that session
+// instead of this Worker's metered key.
+
+async function queueEditRequest(env, { title, request, target }) {
+  const repo = SITE_REPOS.dashboard; // task files always live in this repo's vault, regardless of which site the edit targets
+  const date = new Date().toISOString().slice(0, 10);
+  const path = `Knowledge/tasks/${date}-${slugify(title || request)}.md`;
+  const body =
+    `---\n` +
+    `title: ${title || "Site edit request"}\n` +
+    `requested: ${new Date().toISOString()}\n` +
+    `target: ${target || "unspecified"}\n` +
+    `status: pending\n` +
+    `---\n\n` +
+    `# ${title || "Site edit request"}\n\n` +
+    `Requested by Bryce via Deja, queued for Claude Code instead of drafted\n` +
+    `immediately (see [[claude-code-task-queue]]).\n\n` +
+    `## What Bryce wants\n\n${request}\n`;
+
+  await githubRequest(env, `/repos/${repo}/contents/${path}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      message: `Queue task for Claude Code: ${title || request}`,
+      content: b64EncodeUtf8(body),
+      branch: "main"
+    })
+  });
+
+  return path;
+}
+
 // ---- Knowledge vault: read-only access to the shared Obsidian vault ------
 //
 // The vault (Knowledge/ in the dashboard repo) is the same repo
@@ -442,6 +482,11 @@ async function dispatchTool(env, name, input) {
     await setStatus(env, { site_editor: { status: "attn", label: "Needs review", lastPublish: new Date().toISOString() } });
     await appendLog(env, { who: "Site Editor", what: `Opened PR — ${input.summary} (${prUrl})` });
     return `Pull request opened: ${prUrl}`;
+  }
+  if (name === "queue_edit_request") {
+    const path = await queueEditRequest(env, input);
+    await appendLog(env, { who: "Site Editor", what: `Queued for Claude Code — ${input.title || input.request} (${path})` });
+    return `Queued at ${path}. Tell Bryce this is waiting for Claude Code, not done yet — Claude Code picks it up automatically the next time Bryce starts a session in this project, not instantly.`;
   }
   if (name === "record_monthly_finance") {
     const summary = await recordFinanceMonth(env, input);
@@ -536,6 +581,19 @@ async function handleAsk(request, env) {
           summary: { type: "string", description: "Short (under 10 words) summary for the PR title and branch name" }
         },
         required: ["target", "path", "instructions", "summary"]
+      }
+    });
+    tools.push({
+      name: "queue_edit_request",
+      description: "Cheaper alternative to propose_site_edit for a change to spotlesslhc.com or the Hermes dashboard. Instead of drafting the edit yourself right now (which costs real API tokens reading the whole file), this just writes a small task note for Claude Code to pick up and do himself the next time Bryce starts a session in this project — free, but not instant. Use this by default for any real site-editing request. Only use propose_site_edit instead if Bryce explicitly says he wants it done immediately, right now, regardless of cost.",
+      input_schema: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Short (under 10 words) title for the task" },
+          request: { type: "string", description: "Bryce's request in his own words — as much detail as he gave you, don't summarize away specifics" },
+          target: { type: "string", enum: ["website", "dashboard"], description: "Which site this is about, if known" }
+        },
+        required: ["title", "request"]
       }
     });
   }
