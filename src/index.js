@@ -81,6 +81,31 @@ async function json(data, init = {}) {
 
 const APPROVAL_REQUIRED_TOOLS = new Set([]);
 
+// KV's list() operation has its own, much smaller daily quota (1,000/day on
+// the free plan) than get()/put() (100,000/day) — and the dashboard polls
+// /api/pending and /api/finance every 60s, so calling list() on every poll
+// burned through that quota by midday. Instead we keep a small index of ids
+// under a single key, updated on write, so reads never need to enumerate
+// keys. getPendingIndex() lazily migrates any pre-existing "pending:*" keys
+// into the index the first time it's read after this change ships — a single
+// one-off list() call, not a recurring one.
+const PENDING_INDEX_KEY = "pending_index";
+
+async function getPendingIndex(env) {
+  const raw = await env.HERMES_KV.get(PENDING_INDEX_KEY);
+  if (raw) return JSON.parse(raw);
+  const list = await env.HERMES_KV.list({ prefix: "pending:" });
+  const ids = list.keys.map((k) => k.name.replace("pending:", ""));
+  await env.HERMES_KV.put(PENDING_INDEX_KEY, JSON.stringify(ids));
+  return ids;
+}
+
+async function addToPendingIndex(env, id) {
+  const ids = await getPendingIndex(env);
+  ids.push(id);
+  await env.HERMES_KV.put(PENDING_INDEX_KEY, JSON.stringify(ids));
+}
+
 async function createPendingAction(env, { tool, input, reason }) {
   const id = crypto.randomUUID();
   const record = {
@@ -91,15 +116,16 @@ async function createPendingAction(env, { tool, input, reason }) {
     result: null, error: null
   };
   await env.HERMES_KV.put(`pending:${id}`, JSON.stringify(record));
+  await addToPendingIndex(env, id);
   await appendLog(env, { who: "Approval queue", what: `${tool} queued for Bryce's approval` + (reason ? ` — ${reason}` : "") });
   return record;
 }
 
 async function listPendingActions(env, { status = "pending" } = {}) {
-  const list = await env.HERMES_KV.list({ prefix: "pending:" });
+  const ids = await getPendingIndex(env);
   const entries = [];
-  for (const key of list.keys) {
-    const raw = await env.HERMES_KV.get(key.name);
+  for (const id of ids) {
+    const raw = await env.HERMES_KV.get(`pending:${id}`);
     if (!raw) continue;
     const record = JSON.parse(raw);
     if (!status || record.status === status) entries.push(record);
@@ -185,15 +211,38 @@ function monthLabel(ym) {
   return new Date(y, m - 1, 1).toLocaleString("en-US", { month: "short" });
 }
 
-async function listFinanceMonths(env, limit = 6) {
+// Same list()-quota problem as the pending-action queue above: keep an
+// index of known months instead of calling list() on every /api/finance
+// poll. getFinanceIndex() lazily migrates any pre-existing "finance:month:*"
+// keys into the index the first time it's read after this change ships.
+const FINANCE_INDEX_KEY = "finance_index";
+
+async function getFinanceIndex(env) {
+  const raw = await env.HERMES_KV.get(FINANCE_INDEX_KEY);
+  if (raw) return JSON.parse(raw);
   const list = await env.HERMES_KV.list({ prefix: "finance:month:" });
-  const keys = list.keys.map((k) => k.name).sort(); // "YYYY-MM" sorts correctly as a string
+  const months = list.keys.map((k) => k.name.replace("finance:month:", "")).sort();
+  await env.HERMES_KV.put(FINANCE_INDEX_KEY, JSON.stringify(months));
+  return months;
+}
+
+async function addToFinanceIndex(env, month) {
+  const months = await getFinanceIndex(env);
+  if (!months.includes(month)) {
+    months.push(month);
+    months.sort(); // "YYYY-MM" sorts correctly as a string
+    await env.HERMES_KV.put(FINANCE_INDEX_KEY, JSON.stringify(months));
+  }
+}
+
+async function listFinanceMonths(env, limit = 6) {
+  const keys = await getFinanceIndex(env);
   const recent = keys.slice(-limit);
   const entries = [];
-  for (const key of recent) {
-    const raw = await env.HERMES_KV.get(key);
+  for (const month of recent) {
+    const raw = await env.HERMES_KV.get(`finance:month:${month}`);
     if (!raw) continue;
-    entries.push({ month: key.replace("finance:month:", ""), ...JSON.parse(raw) });
+    entries.push({ month, ...JSON.parse(raw) });
   }
   return entries;
 }
@@ -221,6 +270,7 @@ async function recordFinanceMonth(env, { month, revenue, expenses }) {
   if (typeof revenue !== "number" || revenue < 0) throw new Error("revenue must be a non-negative number");
   if (typeof expenses !== "number" || expenses < 0) throw new Error("expenses must be a non-negative number");
   await env.HERMES_KV.put(`finance:month:${month}`, JSON.stringify({ revenue, expenses }));
+  await addToFinanceIndex(env, month);
   await appendLog(env, { who: "Bookkeeper", what: `Recorded ${monthLabel(month)} ${month.slice(0, 4)} financials \u2014 revenue $${revenue.toLocaleString()}, expenses $${expenses.toLocaleString()}` });
   return getFinanceSummary(env);
 }
