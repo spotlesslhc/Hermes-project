@@ -73,3 +73,11 @@ read API becomes available later — they're just not used by
 
 There's an unrelated, unconfirmed security follow-up from setting up
 Wave's app page — see [[2026-09-21-wave-client-secret-exposure]].
+
+## Past incident: KV list() quota exhaustion
+
+The dashboard's 60s polling of `/api/finance` (and `/api/pending`) used to
+call `env.HERMES_KV.list()` on every poll, which exhausted Cloudflare
+KV's much-lower `list()` quota by midday and blocked the Save button —
+see [[2026-09-22-kv-list-quota-exhaustion]] for what happened and the
+fix.
