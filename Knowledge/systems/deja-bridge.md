@@ -58,6 +58,22 @@ conscious choice, not an oversight: it means anything sent through this
 bridge now carries the same authority Bryce's own dashboard messages do.
 Deployed live 2026-09-21.
 
+## A real bug this bridge caught (fixed 2026-09-21)
+
+A routine check-in through this bridge ("can you confirm you're
+receiving this") came back as a 502 instead of a reply. The actual cause
+had nothing to do with the bridge itself: `handleAsk` only ever handled
+the *first* tool Claude called in a turn. When Claude called two tools
+back to back (e.g. `list_vault_notes` then `read_vault_note`, a normal
+pattern given how the system prompt describes using them), the second
+tool call was left without a matching result, and Claude's API rejected
+the whole next request outright. Fixed the same day — every tool call in
+a turn now gets handled, with all their results sent back together.
+
+Worth remembering: this bridge is a good, low-effort way to sanity-check
+`/api/ask` end to end after a deploy — the exact prompt that triggered
+this bug became the regression test for the fix.
+
 ## What this touches
 
 Doesn't change the dashboard or how Bryce talks to Deja normally. Relevant

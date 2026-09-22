@@ -40,6 +40,9 @@ The dashboard shows:
 - Four "agent" cards: [[Zapier Overseer Agent]], [[Scheduler Agent]],
   [[Bookkeeper Agent]], and [[Site Editor Agent]]. Each is meant to
   represent one area of the business Hermes will eventually oversee.
+- Four "agent" cards, then a **Pending Actions** panel (see
+  [[approval-queue]]) — empty today, it's where any future action that
+  needs Bryce's explicit approval would show up with Approve/Deny buttons.
 - A Financial Snapshot section — revenue, net profit, and net margin stat
   cards plus two charts, backed by whatever monthly numbers Bryce has
   entered so far (a form on the dashboard, or telling Hermes/Deja directly
@@ -47,8 +50,13 @@ The dashboard shows:
   See [[wave-integration]] for why it's manual entry rather than automated
   from Wave.
 - An activity log of recent events.
-- A "Talk to Hermes" / "Ask Deja" box where Bryce can type or speak a
-  question and get a reply, out loud if he wants.
+- The "Talk to Deja" chat box — as of 2026-09-21 it's the first thing under
+  the orb, not the last section on the page. Bryce can type, tap the mic,
+  or say "Hey Deja" to start a hands-free back-and-forth conversation that
+  keeps listening until he says "goodbye" — see [[voice-and-conversation]]
+  for how that actually works and the two real bugs found and fixed getting
+  there. The orb itself can also be popped into a floating window that
+  stays on top of other apps — see [[floating-orb]].
 
 Deja/Hermes can also be reached outside the dashboard: Claude Code can talk
 to her directly through a small bridge script, see [[deja-bridge]]. She can
@@ -61,19 +69,23 @@ to actually watch Zapier or assign cleaners yet. [[Bookkeeper Agent]] and
 [[Site Editor Agent]] are the two real ones: Bookkeeper can record and
 read monthly financials (see [[wave-integration]]), and Site Editor can
 open real PRs via `propose_site_edit` (see [[site-editor]]). "Talk to
-Hermes" / "Ask Deja" is also fully real — it sends the question to Claude
-and shows a genuine reply, calling `propose_site_edit` or
-`record_monthly_finance` itself when asked.
+Deja" is also fully real — it sends the question to Claude and shows a
+genuine reply, calling `propose_site_edit` or `record_monthly_finance`
+itself when asked, or queuing the action for approval instead if it's ever
+a tool risky enough to need that (see [[approval-queue]] — nothing today
+actually is).
 
 ## The Cloudflare Worker (the backend)
 
 A "Worker" is Cloudflare's name for a small backend program that runs
 on their network on demand — there's no server to maintain or pay for
-by the hour. Hermes' Worker does two jobs:
+by the hour. Hermes' Worker does these jobs:
 
 1. Answers `/api/ask` — takes whatever you typed or said to Hermes,
    sends it to Claude along with Hermes' instructions (its personality
-   and job description), and returns the reply.
+   and job description), and returns the reply. Handles Claude calling
+   more than one tool in the same turn (fixed 2026-09-21 — see
+   [[deja-bridge]] for how that bug was actually found).
 2. Answers `/api/status` and `/api/log` — hands the dashboard the
    current agent statuses and recent activity, so the page can update
    itself without a full reload.
@@ -82,7 +94,15 @@ by the hour. Hermes' Worker does two jobs:
    saves one month's numbers (used by both the dashboard's entry form and
    Hermes' `record_monthly_finance` chat tool). Backed by manually entered
    numbers in KV, not a live Wave feed; see [[wave-integration]] for why.
-4. Listens for `/webhooks/reservation` — a way for Zapier to notify
+4. Answers `/api/speak` — turns a reply's text into real speech via
+   ElevenLabs (currently the "Bella" voice), proxied server-side so the
+   API key never reaches the browser. Falls back to the browser's own
+   built-in voice if this fails or isn't configured. See
+   [[voice-and-conversation]].
+5. Answers `/api/pending` (list) and `/api/pending/decide` (approve/deny)
+   — the backend half of the Pending Actions panel. See
+   [[approval-queue]].
+6. Listens for `/webhooks/reservation` — a way for Zapier to notify
    Hermes the moment a new booking comes in, so it can eventually flag
    it for the [[Scheduler Agent]].
 
@@ -95,7 +115,7 @@ Worker only kicks in for those API and webhook addresses.
 Workers don't remember anything between requests on their own, so
 there's a separate storage bucket called a KV namespace — think of it
 as a simple filing cabinet Hermes can read from and write to. It's
-named `HERMES_KV`. Right now it holds four things:
+named `HERMES_KV`. Right now it holds five things:
 
 - **Agent status** — the running/idle/needs-review state shown on each
   agent card.
@@ -106,6 +126,8 @@ named `HERMES_KV`. Right now it holds four things:
 - **Monthly finance entries** (`finance:month:YYYY-MM`) — Bryce's
   manually entered revenue/expenses per month, powering the Financial
   Snapshot section. See [[wave-integration]].
+- **Pending actions** (`pending:<uuid>`) — added 2026-09-21, holds any
+  action queued for Bryce's approval. Empty today. See [[approval-queue]].
 
 ## The Secrets Store bindings
 
@@ -114,7 +136,7 @@ sitting in plain text anywhere in the code — Cloudflare keeps each one
 hidden even from the project's settings page after it's been saved. Each
 binding has to be declared both in the Secrets Store itself and in
 `wrangler.jsonc` (`secrets_store_secrets`), or the Worker won't actually
-receive it. Three are bound right now:
+receive it. Four are bound right now:
 
 - **`ANTHROPIC_API_KEY`** — proves to Anthropic (the company that makes
   Claude) that requests are allowed and billed to Bryce's account. The
@@ -129,6 +151,11 @@ receive it. Three are bound right now:
   no way to read dated transaction history at all. See
   [[wave-integration]] for what actually powers the Financial Snapshot
   section instead.
+- **`ELEVENLABS_API_KEY`** — bound and active as of 2026-09-21. Lets the
+  Worker call ElevenLabs' text-to-speech API server-side for `/api/speak`.
+  Deliberately added to `wrangler.jsonc` only *after* the actual secret
+  existed in the Secrets Store — binding to a not-yet-created secret can
+  fail the whole deploy, not just voice. See [[voice-and-conversation]].
 
 ## Repo structure
 
@@ -182,5 +209,8 @@ that yet.
   as of 2026-09-21 the whole Worker (dashboard + API) sits behind
   Cloudflare Access — anyone visiting needs to authenticate through
   Access, and automated requests (like testing) need an Access Service
-  Token. This isn't yet documented in detail anywhere in this vault; worth
-  a proper note if Access setup needs to change again.
+  Token.
+- The [[approval-queue]] framework is fully built and tested but currently
+  gates nothing — none of Hermes' three real tools are risky enough to
+  need it. It's there for whenever a real risky tool (payments, calendar
+  writes, anything hard to reverse) gets added.

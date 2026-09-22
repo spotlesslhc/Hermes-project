@@ -1,3 +1,5 @@
 node_modules/
 .wrangler/
 tools/deja-bridge/.env.local
+.obsidian/
+.claude/settings.local.json
