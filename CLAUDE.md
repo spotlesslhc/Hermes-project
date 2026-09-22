@@ -39,3 +39,15 @@ folder (not in `Knowledge/tasks/done/`). If any exist:
 
 If the folder is empty (or only has files under `done/`), there's nothing
 to do here — no need to mention it unless asked.
+
+## Log mistakes in the vault
+
+When a session in this repo turns up a real mistake — a bug that shipped
+and Bryce caught, a wrong assumption that wasted time, a broken deploy, a
+misunderstanding of how a system here actually works — write it up as a
+dated note in `Knowledge/decisions/`, the same way
+`2026-09-21-wave-client-secret-exposure.md` documents an open issue: what
+happened, why, and what to do differently next time. This is how the
+shared vault keeps a future session (Claude Code or Deja) from repeating
+it. It's a documentation-only change to `Knowledge/`, so it can go
+straight to `main` like any other vault note.
