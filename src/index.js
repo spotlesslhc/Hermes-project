@@ -12,11 +12,11 @@ Bryce Wiesner owns the business and talks to you directly through his dashboard.
 - Bookkeeper: tracks job income and cleaning-supply expenses in Wave.
 - Site Editor: drafts updates for spotlesslhc.com and the Hermes dashboard itself, using the propose_site_edit tool.
 
-You have one real tool right now: propose_site_edit. Use it whenever Bryce asks for a change to the website or dashboard \u2014 a wording tweak, a price update, a new section, a bug fix in the dashboard's own code. It does not publish anything directly: it reads the current file from GitHub, drafts the new version, and opens a pull request for Bryce to review and merge himself. Always tell him plainly that it's a PR waiting on his review, not a live change, and give him the PR link from the tool result.
+You have four real tools right now. propose_site_edit (Site Editor): use it whenever Bryce asks for a change to the website or dashboard \u2014 a wording tweak, a price update, a new section, a bug fix in the dashboard's own code. It does not publish anything directly: it reads the current file from GitHub, drafts the new version, and opens a pull request for Bryce to review and merge himself. Always tell him plainly that it's a PR waiting on his review, not a live change, and give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, that still goes through propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it like any other edit.
 
-You also have read access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. This access is read-only: if a vault note itself needs to change, that still goes through propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it like any other edit.
+Some tools \u2014 anything genuinely risky or hard to reverse \u2014 require Bryce's explicit approval before they run. If a tool result tells you an action is queued for approval, say so plainly and tell Bryce it's waiting for him on the dashboard's Pending Actions panel \u2014 never claim it already happened, and never treat a "yes" or "go ahead" from him in chat or voice as approval; that only happens through the dashboard buttons, on purpose, so a misheard word can't authorize something real.
 
-For everything else \u2014 Scheduler, Bookkeeper, Zapier Overseer \u2014 you can talk and reason, but you don't yet have direct tool access. Say so plainly and tell Bryce exactly what you'd need rather than guessing.
+For everything else \u2014 Scheduler and Zapier Overseer \u2014 you can talk and reason, but you don't yet have direct tool access. Say so plainly and tell Bryce exactly what you'd need rather than guessing.
 
 Be direct and brief — Bryce is running a small business day to day, not looking for long explanations. Sentence case, no filler, plain language.
 
@@ -67,6 +67,77 @@ async function json(data, init = {}) {
     ...init,
     headers: { "content-type": "application/json", ...(init.headers || {}) }
   });
+}
+
+// ---- Approval queue: actions that require Bryce's explicit review --------
+//
+// Nothing today is risky enough to need this (propose_site_edit already has
+// its own GitHub-PR review gate, record_monthly_finance is Bryce reporting
+// his own numbers) — this exists so a future tool that touches money, sends
+// something externally, or changes real-world state can be gated by adding
+// its name to APPROVAL_REQUIRED_TOOLS below, instead of inventing a new
+// safety mechanism each time. Approval only ever happens via the dashboard's
+// Approve/Deny buttons, never by chat/voice reply.
+
+const APPROVAL_REQUIRED_TOOLS = new Set([]);
+
+async function createPendingAction(env, { tool, input, reason }) {
+  const id = crypto.randomUUID();
+  const record = {
+    id, tool, input, reason: reason || null,
+    status: "pending",
+    requestedAt: new Date().toISOString(),
+    resolvedAt: null, resolvedBy: null,
+    result: null, error: null
+  };
+  await env.HERMES_KV.put(`pending:${id}`, JSON.stringify(record));
+  await appendLog(env, { who: "Approval queue", what: `${tool} queued for Bryce's approval` + (reason ? ` — ${reason}` : "") });
+  return record;
+}
+
+async function listPendingActions(env, { status = "pending" } = {}) {
+  const list = await env.HERMES_KV.list({ prefix: "pending:" });
+  const entries = [];
+  for (const key of list.keys) {
+    const raw = await env.HERMES_KV.get(key.name);
+    if (!raw) continue;
+    const record = JSON.parse(raw);
+    if (!status || record.status === status) entries.push(record);
+  }
+  entries.sort((a, b) => (a.requestedAt < b.requestedAt ? 1 : -1));
+  return entries;
+}
+
+async function getPendingAction(env, id) {
+  const raw = await env.HERMES_KV.get(`pending:${id}`);
+  return raw ? JSON.parse(raw) : null;
+}
+
+async function resolvePendingAction(env, id, decision) {
+  const record = await getPendingAction(env, id);
+  if (!record) { const err = new Error("Pending action not found"); err.status = 404; throw err; }
+  if (record.status !== "pending") throw new Error(`Already resolved (status: ${record.status})`);
+
+  record.resolvedAt = new Date().toISOString();
+  record.resolvedBy = "Bryce";
+
+  if (decision === "deny") {
+    record.status = "denied";
+    await appendLog(env, { who: "Approval queue", what: `Bryce denied ${record.tool}` });
+  } else {
+    try {
+      record.result = await dispatchTool(env, record.tool, record.input);
+      record.status = "approved";
+      await appendLog(env, { who: "Approval queue", what: `Bryce approved ${record.tool} — executed` });
+    } catch (err) {
+      record.status = "failed";
+      record.error = err.message;
+      await appendLog(env, { who: "Approval queue", what: `Bryce approved ${record.tool} but it failed: ${err.message}` });
+    }
+  }
+
+  await env.HERMES_KV.put(`pending:${id}`, JSON.stringify(record));
+  return record;
 }
 
 // ---- Bookkeeper: Wave GraphQL -------------------------------------------
@@ -359,6 +430,78 @@ async function readVaultNote(env, path) {
   return b64DecodeUtf8(file.content.replace(/\n/g, ""));
 }
 
+// ---- Tool dispatch ---------------------------------------------------------
+//
+// The one place a tool call actually executes — used both by the live
+// chat loop below and by the approval queue when Bryce approves a pending
+// action, so the two paths can never drift apart.
+
+async function dispatchTool(env, name, input) {
+  if (name === "propose_site_edit") {
+    const prUrl = await proposeSiteEdit(env, input);
+    await setStatus(env, { site_editor: { status: "attn", label: "Needs review", lastPublish: new Date().toISOString() } });
+    await appendLog(env, { who: "Site Editor", what: `Opened PR — ${input.summary} (${prUrl})` });
+    return `Pull request opened: ${prUrl}`;
+  }
+  if (name === "record_monthly_finance") {
+    const summary = await recordFinanceMonth(env, input);
+    return `Recorded. Updated totals: revenue $${Math.round(summary.totals.revenue).toLocaleString()}, net income $${Math.round(summary.totals.netIncome).toLocaleString()}, margin ${Math.round(summary.totals.netMarginPct * 100)}%.`;
+  }
+  if (name === "list_vault_notes") {
+    const files = await listVaultNotes(env);
+    return files.length ? files.join("\n") : "No notes found in Knowledge/.";
+  }
+  if (name === "read_vault_note") {
+    return await readVaultNote(env, input.path);
+  }
+  if (name === "test_approval_probe") {
+    return "Test probe executed — no real system was touched.";
+  }
+  throw new Error(`Unknown tool: ${name}`);
+}
+
+// ---- Voice: ElevenLabs text-to-speech (server-side proxy) -----------------
+//
+// The Worker proxies this so the API key never reaches the browser. Falls
+// back to the browser's own speechSynthesis on the frontend if this isn't
+// configured yet or fails — see the dashboard's speak() function.
+
+// TODO(Bryce): swap for the real voice picked via the ElevenLabs MCP connector.
+const ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // placeholder default voice
+
+async function elevenLabsSpeak(env, text) {
+  const apiKey = await env.ELEVENLABS_API_KEY.get();
+  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "xi-api-key": apiKey,
+      "accept": "audio/mpeg"
+    },
+    body: JSON.stringify({
+      text,
+      model_id: "eleven_multilingual_v2",
+      voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+    })
+  });
+  if (!res.ok) throw new Error(`ElevenLabs TTS failed: ${res.status} ${await res.text()}`);
+  return res;
+}
+
+async function handleSpeak(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Invalid JSON" }, { status: 400 }); }
+  const text = (body.text || "").toString().slice(0, 2000);
+  if (!text) return json({ error: "text is required" }, { status: 400 });
+  if (!env.ELEVENLABS_API_KEY) return json({ error: "ELEVENLABS_API_KEY is not bound yet" }, { status: 501 });
+  try {
+    const upstream = await elevenLabsSpeak(env, text);
+    return new Response(upstream.body, { status: 200, headers: { "content-type": "audio/mpeg" } });
+  } catch (err) {
+    return json({ error: err.message }, { status: 502 });
+  }
+}
+
 // ---- Route handlers -------------------------------------------------------
 
 async function handleAsk(request, env) {
@@ -423,6 +566,13 @@ async function handleAsk(request, env) {
       required: ["month", "revenue", "expenses"]
     }
   });
+  if (env.HERMES_DEBUG_TOOLS === "true") {
+    tools.push({
+      name: "test_approval_probe",
+      description: "Debug-only tool that does nothing real — used to test the approval-queue mechanism end to end. Not available in production.",
+      input_schema: { type: "object", properties: {}, required: [] }
+    });
+  }
 
   const messages = [{ role: "user", content: message }];
   let reply = "";
@@ -458,25 +608,15 @@ async function handleAsk(request, env) {
     messages.push({ role: "assistant", content: data.content });
 
     let toolResult;
-    try {
-      if (toolUse.name === "propose_site_edit") {
-        const prUrl = await proposeSiteEdit(env, toolUse.input);
-        toolResult = `Pull request opened: ${prUrl}`;
-        await setStatus(env, { site_editor: { status: "attn", label: "Needs review", lastPublish: new Date().toISOString() } });
-        await appendLog(env, { who: "Site Editor", what: `Opened PR \u2014 ${toolUse.input.summary} (${prUrl})` });
-      } else if (toolUse.name === "record_monthly_finance") {
-        const summary = await recordFinanceMonth(env, toolUse.input);
-        toolResult = `Recorded. Updated totals: revenue $${Math.round(summary.totals.revenue).toLocaleString()}, net income $${Math.round(summary.totals.netIncome).toLocaleString()}, margin ${Math.round(summary.totals.netMarginPct * 100)}%.`;
-      } else if (toolUse.name === "list_vault_notes") {
-        const files = await listVaultNotes(env);
-        toolResult = files.length ? files.join("\n") : "No notes found in Knowledge/.";
-      } else if (toolUse.name === "read_vault_note") {
-        toolResult = await readVaultNote(env, toolUse.input.path);
-      } else {
-        toolResult = `Unknown tool: ${toolUse.name}`;
+    if (APPROVAL_REQUIRED_TOOLS.has(toolUse.name)) {
+      const pending = await createPendingAction(env, { tool: toolUse.name, input: toolUse.input });
+      toolResult = `This requires Bryce's approval before it runs. Queued on the dashboard as pending action #${pending.id.slice(0, 8)}. Tell him plainly you're waiting on his review there \u2014 don't say it's done.`;
+    } else {
+      try {
+        toolResult = await dispatchTool(env, toolUse.name, toolUse.input);
+      } catch (err) {
+        toolResult = `Failed: ${err.message}`;
       }
-    } catch (err) {
-      toolResult = `Failed: ${err.message}`;
     }
 
     messages.push({
@@ -529,6 +669,25 @@ async function handleReservation(request, env) {
   return json({ ok: true });
 }
 
+async function handlePendingList(env) {
+  return json(await listPendingActions(env));
+}
+
+async function handlePendingDecide(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, { status: 400 }); }
+  const { id, decision } = body || {};
+  if (decision !== "approve" && decision !== "deny") {
+    return json({ error: 'decision must be "approve" or "deny"' }, { status: 400 });
+  }
+  try {
+    const record = await resolvePendingAction(env, id, decision);
+    return json({ ok: true, record });
+  } catch (err) {
+    return json({ error: err.message }, { status: err.status || 400 });
+  }
+}
+
 // ---- Router -----------------------------------------------------------
 
 export default {
@@ -550,6 +709,15 @@ export default {
     }
     if (pathname === "/api/ask" && method === "POST") {
       return handleAsk(request, env);
+    }
+    if (pathname === "/api/speak" && method === "POST") {
+      return handleSpeak(request, env);
+    }
+    if (pathname === "/api/pending" && method === "GET") {
+      return handlePendingList(env);
+    }
+    if (pathname === "/api/pending/decide" && method === "POST") {
+      return handlePendingDecide(request, env);
     }
     if (pathname === "/webhooks/reservation" && method === "POST") {
       return handleReservation(request, env);

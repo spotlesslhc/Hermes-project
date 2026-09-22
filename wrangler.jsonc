@@ -29,5 +29,14 @@
       "store_id": "8f15d6429b5741f9ac32e05415413a65",
       "secret_name": "WAVE_API_TOKEN"
     }
-  ]
+    // Once you've created ELEVENLABS_API_KEY in the Secrets Store (see
+    // README.md "4b"), add it here too, in the same shape as the entries
+    // above. Deliberately left out until the secret actually exists —
+    // binding to a secret that isn't there yet can fail the whole deploy,
+    // not just voice. Until then /api/speak just falls back to the
+    // browser's built-in voice.
+  ],
+  "vars": {
+    "HERMES_DEBUG_TOOLS": "false"
+  }
 }

@@ -252,6 +252,19 @@
   .log-row .who{font-weight:500; color:var(--teal-deep);}
   .log-row .what{color:var(--ink);}
 
+  /* Pending Actions */
+  .pending-list{display:flex; flex-direction:column; gap:10px; margin-bottom:8px;}
+  .pending-item{
+    background:var(--paper-raised); border:1px solid var(--line);
+    border-left:3px solid var(--amber); border-radius:3px;
+    padding:14px 16px;
+    display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;
+  }
+  .pending-item-info{display:flex; flex-direction:column; gap:3px; min-width:200px;}
+  .pending-item-tool{font-size:14px; font-weight:600;}
+  .pending-item-detail{font-size:12.5px; color:var(--ink-soft);}
+  .pending-item-actions{display:flex; gap:8px; flex:none;}
+
   /* Ask Deja */
   .ask-panel{
     background:var(--paper-raised); border:1px solid var(--line); border-radius:3px;
@@ -315,6 +328,36 @@
       <canvas id="orbCanvas"></canvas>
     </div>
     <div class="orb-label">Deja</div>
+  </div>
+
+  <div class="section-head">
+    <h2>Talk to Deja</h2>
+    <div class="hint">Type, tap the mic, or just say "Hey Deja" — she can reply out loud</div>
+  </div>
+  <div class="ask-panel">
+    <div class="ask-who">
+      <span class="ask-avatar" id="askAvatar">🪽</span>
+      <div>
+        <div class="ask-name">Deja</div>
+        <div class="ask-state" id="askState">Ready</div>
+      </div>
+      <label class="voice-toggle">
+        <input type="checkbox" id="voiceToggle" checked>
+        <span>Speak replies</span>
+      </label>
+      <label class="voice-toggle">
+        <input type="checkbox" id="wakeToggle" checked>
+        <span>Listen for "Hey Deja"</span>
+      </label>
+    </div>
+    <div class="ask-reply" id="askReply">Ask about a job, a property, or what needs attention today.</div>
+    <form id="askForm" class="ask-row">
+      <button type="button" class="mic-btn" id="micBtn" title="Talk to Deja" aria-label="Talk to Deja">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+      </button>
+      <input id="askInput" class="ask-input" type="text" placeholder="e.g. What needs my attention today?" autocomplete="off">
+      <button class="btn primary" type="submit" id="askSend">Send</button>
+    </form>
   </div>
 
   <div class="head">
@@ -455,6 +498,12 @@
   </div>
 
   <div class="section-head">
+    <h2>Pending Actions</h2>
+    <div class="hint" id="pendingHint">Nothing waiting on you right now</div>
+  </div>
+  <div class="pending-list" id="pendingList" hidden></div>
+
+  <div class="section-head">
     <h2>Financial Snapshot</h2>
     <div class="section-head-right">
       <div class="hint" id="financeHint">Preview data — add this month's numbers to see real ones</div>
@@ -516,36 +565,6 @@
     <div class="log-row"><span class="t">2 days ago</span><span class="who">Zapier Overseer</span><span class="what">Caught a delayed webhook and retried it successfully</span></div>
   </div>
 
-  <div class="section-head">
-    <h2>Talk to Deja</h2>
-    <div class="hint">Type, tap the mic, or just say "Hey Deja" — she can reply out loud</div>
-  </div>
-  <div class="ask-panel">
-    <div class="ask-who">
-      <span class="ask-avatar" id="askAvatar">🪽</span>
-      <div>
-        <div class="ask-name">Deja</div>
-        <div class="ask-state" id="askState">Ready</div>
-      </div>
-      <label class="voice-toggle">
-        <input type="checkbox" id="voiceToggle" checked>
-        <span>Speak replies</span>
-      </label>
-      <label class="voice-toggle">
-        <input type="checkbox" id="wakeToggle" checked>
-        <span>Listen for "Hey Deja"</span>
-      </label>
-    </div>
-    <div class="ask-reply" id="askReply">Ask about a job, a property, or what needs attention today.</div>
-    <form id="askForm" class="ask-row">
-      <button type="button" class="mic-btn" id="micBtn" title="Talk to Deja" aria-label="Talk to Deja">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-      </button>
-      <input id="askInput" class="ask-input" type="text" placeholder="e.g. What needs my attention today?" autocomplete="off">
-      <button class="btn primary" type="submit" id="askSend">Send</button>
-    </form>
-  </div>
-
   <footer>
     <span>Deja · internal tool</span>
     <span id="footDate">—</span>
@@ -575,6 +594,10 @@
     if(hrs < 24) return hrs + (hrs===1 ? ' hour ago' : ' hours ago');
     const days = Math.round(hrs / 24);
     return days + (days===1 ? ' day ago' : ' days ago');
+  }
+
+  function escapeHtml(str){
+    return String(str).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
   async function loadStatus(){
@@ -634,6 +657,52 @@
     }catch(e){ /* Not deployed yet, or offline — leave the preview data showing. */ }
   }
 
+  async function loadPending(){
+    try{
+      const res = await fetch('/api/pending');
+      if(!res.ok) return;
+      const items = await res.json();
+      const container = document.getElementById('pendingList');
+      const hint = document.getElementById('pendingHint');
+      if(!items.length){
+        container.hidden = true;
+        container.innerHTML = '';
+        hint.textContent = 'Nothing waiting on you right now';
+        return;
+      }
+      hint.textContent = items.length + (items.length === 1 ? ' action waiting on you' : ' actions waiting on you');
+      container.hidden = false;
+      container.innerHTML = items.map(p => `
+        <div class="pending-item" data-id="${escapeHtml(p.id)}">
+          <div class="pending-item-info">
+            <div class="pending-item-tool">${escapeHtml(p.tool)}</div>
+            <div class="pending-item-detail">${escapeHtml(JSON.stringify(p.input))}${p.reason ? ' — ' + escapeHtml(p.reason) : ''}</div>
+          </div>
+          <div class="pending-item-actions">
+            <button class="btn primary" data-decision="approve">Approve</button>
+            <button class="btn" data-decision="deny">Deny</button>
+          </div>
+        </div>`).join('');
+      container.querySelectorAll('.pending-item').forEach(row => {
+        const id = row.getAttribute('data-id');
+        row.querySelectorAll('button[data-decision]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            row.querySelectorAll('button').forEach(b => b.disabled = true);
+            try{
+              await fetch('/api/pending/decide', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ id, decision: btn.getAttribute('data-decision') })
+              });
+            }catch(e){}
+            loadPending();
+            loadLog();
+          });
+        });
+      });
+    }catch(e){ /* Not deployed yet, or offline — leave as-is. */ }
+  }
+
   document.getElementById('askForm').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const input = document.getElementById('askInput');
@@ -643,6 +712,8 @@
     const avatar = document.getElementById('askAvatar');
     const message = input.value.trim();
     if(!message) return;
+
+    const finish = () => { if(window.DejaVoice) window.DejaVoice.onSpeakDone(); };
 
     reply.textContent = 'Thinking…';
     reply.classList.add('pending');
@@ -662,122 +733,202 @@
       stateEl.textContent = 'Ready';
       if(res.ok){
         loadLog();
+        loadPending();
         if(document.getElementById('voiceToggle').checked){
-          speak(text, avatar, stateEl);
+          speak(text, avatar, stateEl, finish);
+        } else {
+          finish();
         }
+      } else {
+        finish();
       }
     }catch(e){
       reply.classList.remove('pending');
       reply.textContent = "Couldn't reach Deja — this dashboard may not be deployed yet.";
       stateEl.textContent = 'Ready';
+      finish();
     }finally{
       sendBtn.disabled = false;
       input.value = '';
     }
   });
 
-  function speak(text, avatar, stateEl){
-    if(!('speechSynthesis' in window)) return;
-    window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.rate = 1.02;
-    utter.onstart = () => { avatar.classList.add('speaking'); stateEl.textContent = 'Speaking…'; if(window.dejaOrbSetState) window.dejaOrbSetState('speaking'); };
-    utter.onend = () => { avatar.classList.remove('speaking'); stateEl.textContent = 'Ready'; if(window.dejaOrbSetState) window.dejaOrbSetState('idle'); };
-    window.speechSynthesis.speak(utter);
+  // Speaks a reply out loud: tries Deja's real ElevenLabs voice first (proxied
+  // server-side so the API key never reaches the browser), and falls back to
+  // the browser's own speechSynthesis if that secret isn't configured yet or
+  // the request fails for any reason. Always calls onDone() exactly once,
+  // which is what lets a hands-free conversation keep going (see setUpVoice).
+  function speak(text, avatar, stateEl, onDone){
+    const done = () => { if(window.DejaVoice) window.DejaVoice.speaking = false; if(onDone) onDone(); };
+    const startUi = () => {
+      if(window.DejaVoice) window.DejaVoice.speaking = true;
+      avatar.classList.add('speaking'); stateEl.textContent = 'Speaking…';
+      if(window.dejaOrbSetState) window.dejaOrbSetState('speaking');
+    };
+    const endUi = () => {
+      avatar.classList.remove('speaking'); stateEl.textContent = 'Ready';
+      if(window.dejaOrbSetState) window.dejaOrbSetState('idle');
+    };
+
+    function fallbackToSpeechSynthesis(){
+      if(!('speechSynthesis' in window)){ done(); return; }
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.rate = 1.02;
+      utter.onstart = startUi;
+      utter.onend = () => { endUi(); done(); };
+      utter.onerror = () => { endUi(); done(); };
+      window.speechSynthesis.speak(utter);
+    }
+
+    fetch('/api/speak', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text })
+    }).then(async (res) => {
+      if(!res.ok) throw new Error('ElevenLabs voice not available');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onplay = startUi;
+      audio.onended = () => { endUi(); URL.revokeObjectURL(url); done(); };
+      audio.onerror = () => { endUi(); URL.revokeObjectURL(url); done(); };
+      audio.play().catch(() => { URL.revokeObjectURL(url); fallbackToSpeechSynthesis(); });
+    }).catch(() => {
+      fallbackToSpeechSynthesis();
+    });
   }
 
-  // Speech-to-text: click the mic, talk, Deja auto-sends what you said.
-  (function setUpMic(){
+  // Voice input: "Hey Deja" starts listening; while a conversation is active,
+  // each reply automatically reopens listening again - no need to repeat the
+  // wake word - until you say "goodbye". A resettable silence timer (not the
+  // browser's own uncontrollable cutoff) gives a couple of extra seconds to
+  // pause mid-sentence before a reply gets sent. A hard safety cap disengages
+  // a standing conversation after a few minutes no matter what, in case
+  // something (background noise, a stuck recognizer) keeps it open.
+  (function setUpVoice(){
     const micBtn = document.getElementById('micBtn');
     const avatar = document.getElementById('askAvatar');
     const stateEl = document.getElementById('askState');
     const input = document.getElementById('askInput');
     const form = document.getElementById('askForm');
+    const wakeToggle = document.getElementById('wakeToggle');
     const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if(!SpeechRecognitionAPI){
       micBtn.disabled = true;
-      micBtn.title = "Voice input isn't supported in this browser — try Chrome";
+      micBtn.title = "Voice input isn't supported in this browser - try Chrome";
       return;
     }
 
-    const recognition = new SpeechRecognitionAPI();
-    recognition.lang = 'en-US';
-    recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
-    let listening = false;
+    const SILENCE_MS = 2500; // extra pause tolerance before a reply gets sent
+    const CONVERSATION_SAFETY_MS = 3 * 60 * 1000; // hard cap on one standing conversation
+    const wakePhrase = /\bhey\s+deja\b/i;
+    const goodbyePhrase = /\b(goodbye|good\s?bye|bye)\b/i;
 
-    recognition.onstart = () => {
-      listening = true;
+    let mode = 'idle'; // 'idle' | 'wake' | 'capture'
+    let conversationActive = false;
+    let silenceTimer = null;
+    let safetyTimer = null;
+    let wakeRec = null;
+    let wakeWanted = wakeToggle ? wakeToggle.checked : false;
+    let wakeRestartTimer = null;
+
+    function clearSilenceTimer(){ clearTimeout(silenceTimer); silenceTimer = null; }
+    function clearSafetyTimer(){ clearTimeout(safetyTimer); safetyTimer = null; }
+    function armSafetyTimer(){
+      clearSafetyTimer();
+      safetyTimer = setTimeout(() => {
+        conversationActive = false;
+        try{ captureRec.stop(); }catch(e){}
+        stateEl.textContent = 'Ready';
+        startWakeListening();
+      }, CONVERSATION_SAFETY_MS);
+    }
+    function isBusy(){
+      return mode === 'capture' || (window.DejaVoice && window.DejaVoice.speaking);
+    }
+
+    // ---- Capture: one command, continuous while talking ----
+    const captureRec = new SpeechRecognitionAPI();
+    captureRec.lang = 'en-US';
+    captureRec.continuous = true;
+    captureRec.interimResults = true;
+    captureRec.maxAlternatives = 1;
+
+    captureRec.onstart = () => {
+      mode = 'capture';
       micBtn.classList.add('listening');
       avatar.classList.add('listening');
-      stateEl.textContent = 'Listening…';
+      stateEl.textContent = 'Listening\u2026';
       if(window.dejaOrbSetState) window.dejaOrbSetState('listening');
     };
-    recognition.onresult = (ev) => {
+    captureRec.onresult = (ev) => {
       let transcript = '';
       for(let i = 0; i < ev.results.length; i++){
         transcript += ev.results[i][0].transcript;
       }
       input.value = transcript;
+      clearSilenceTimer();
+      silenceTimer = setTimeout(() => { try{ captureRec.stop(); }catch(e){} }, SILENCE_MS);
     };
-    recognition.onerror = () => {
-      stateEl.textContent = 'Ready';
-    };
-    recognition.onend = () => {
-      listening = false;
+    captureRec.onerror = () => {
+      clearSilenceTimer();
+      mode = 'idle';
       micBtn.classList.remove('listening');
       avatar.classList.remove('listening');
       if(window.dejaOrbSetState) window.dejaOrbSetState('idle');
-      if(input.value.trim()){
+      stateEl.textContent = 'Ready';
+      conversationActive = false;
+      clearSafetyTimer();
+      startWakeListening();
+    };
+    captureRec.onend = () => {
+      clearSilenceTimer();
+      micBtn.classList.remove('listening');
+      avatar.classList.remove('listening');
+      if(window.dejaOrbSetState) window.dejaOrbSetState('idle');
+      mode = 'idle';
+      const said = input.value.trim();
+      if(!said){
         stateEl.textContent = 'Ready';
-        form.requestSubmit();
-      } else {
-        stateEl.textContent = 'Ready';
+        if(conversationActive){ conversationActive = false; clearSafetyTimer(); startWakeListening(); }
+        return;
       }
+      if(goodbyePhrase.test(said)){
+        input.value = '';
+        conversationActive = false;
+        clearSafetyTimer();
+        stateEl.textContent = 'Bye - say "Hey Deja" anytime.';
+        startWakeListening();
+        return;
+      }
+      stateEl.textContent = 'Ready';
+      form.requestSubmit();
     };
 
-    micBtn.addEventListener('click', () => {
-      if(listening){
-        recognition.stop();
-      } else {
-        window.speechSynthesis.cancel();
-        input.value = '';
-        recognition.start();
-      }
-    });
-  })();
-
-  // Wake-word listening: a second, always-on recognition instance that just
-  // watches for "hey deja" in the background. It never sends anything on its
-  // own — hearing the wake word simply starts the same one-shot recognition
-  // the mic button uses, so the rest of the flow (capture, submit, speak
-  // reply) is identical either way. Paused while Deja is speaking or while
-  // a one-shot recognition is already active, so it can't hear itself or
-  // double-trigger.
-  (function setUpWakeWord(){
-    const wakeToggle = document.getElementById('wakeToggle');
-    const micBtn = document.getElementById('micBtn');
-    const stateEl = document.getElementById('askState');
-    const avatar = document.getElementById('askAvatar');
-    const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if(!SpeechRecognitionAPI || !wakeToggle) return;
-
-    const wakePhrase = /\bhey\s+deja\b/i;
-    let wakeRec = null;
-    let wakeWanted = wakeToggle.checked;
-    let restartTimer = null;
-
-    function isBusy(){
-      // Don't listen for the wake word while a command is actively being
-      // captured/sent, or while Deja is speaking the reply out loud.
-      return document.getElementById('micBtn').classList.contains('listening')
-        || window.speechSynthesis.speaking
-        || document.getElementById('askSend').disabled;
+    function beginCapture(){
+      if(mode === 'capture') return;
+      try{ window.speechSynthesis.cancel(); }catch(e){}
+      input.value = '';
+      try{ captureRec.start(); }catch(e){ /* already starting */ }
     }
 
-    function startWake(){
+    micBtn.addEventListener('click', () => {
+      if(mode === 'capture'){
+        captureRec.stop();
+      } else {
+        conversationActive = false; // manual click is single-turn; only the wake word starts a standing conversation
+        clearSafetyTimer();
+        if(wakeRec){ try{ wakeRec.stop(); }catch(e){} }
+        beginCapture();
+      }
+    });
+
+    // ---- Wake word: always-on background listener for "Hey Deja" ----
+    function startWakeListening(){
       if(!wakeWanted || isBusy()) return;
+      mode = 'wake';
       wakeRec = new SpeechRecognitionAPI();
       wakeRec.lang = 'en-US';
       wakeRec.continuous = true;
@@ -789,38 +940,60 @@
         }
         if(wakePhrase.test(transcript)){
           try{ wakeRec.stop(); }catch(e){}
-          stateEl.textContent = 'Heard you \u2014 go ahead';
-          if(avatar) avatar.classList.add('listening');
-          setTimeout(() => micBtn.click(), 250);
+          conversationActive = true;
+          armSafetyTimer();
+          stateEl.textContent = 'Heard you - go ahead';
+          avatar.classList.add('listening');
+          setTimeout(() => beginCapture(), 250);
         }
       };
       wakeRec.onerror = (ev) => {
         // 'no-speech' and 'aborted' are routine on a long-running listener;
         // anything else, back off briefly before retrying.
         if(ev.error !== 'no-speech' && ev.error !== 'aborted'){
-          clearTimeout(restartTimer);
-          restartTimer = setTimeout(scheduleRestart, 2000);
+          clearTimeout(wakeRestartTimer);
+          wakeRestartTimer = setTimeout(scheduleWakeRestart, 2000);
         }
       };
-      wakeRec.onend = () => { scheduleRestart(); };
-      try{ wakeRec.start(); }catch(e){ scheduleRestart(); }
+      wakeRec.onend = () => { scheduleWakeRestart(); };
+      try{ wakeRec.start(); }catch(e){ scheduleWakeRestart(); }
     }
 
-    function scheduleRestart(){
-      clearTimeout(restartTimer);
-      restartTimer = setTimeout(startWake, 400);
+    function scheduleWakeRestart(){
+      clearTimeout(wakeRestartTimer);
+      wakeRestartTimer = setTimeout(startWakeListening, 400);
     }
 
-    wakeToggle.addEventListener('change', () => {
-      wakeWanted = wakeToggle.checked;
-      if(wakeWanted){
-        startWake();
-      } else if(wakeRec){
-        try{ wakeRec.stop(); }catch(e){}
+    if(wakeToggle){
+      wakeToggle.addEventListener('change', () => {
+        wakeWanted = wakeToggle.checked;
+        if(wakeWanted){
+          startWakeListening();
+        } else {
+          if(wakeRec){ try{ wakeRec.stop(); }catch(e){} }
+          conversationActive = false;
+          clearSafetyTimer();
+          if(mode === 'capture'){ try{ captureRec.stop(); }catch(e){} }
+        }
+      });
+    }
+
+    // Bridge so the ask-form submit handler can tell us a reply finished
+    // speaking, and - as long as a conversation is active and the wake
+    // toggle is still on - keep listening without repeating the wake word.
+    window.DejaVoice = {
+      speaking: false,
+      onSpeakDone(){
+        mode = 'idle';
+        if(conversationActive && wakeWanted){
+          beginCapture();
+        } else {
+          startWakeListening();
+        }
       }
-    });
+    };
 
-    startWake();
+    startWakeListening();
   })();
 
   (function setUpFinanceEntry(){
@@ -987,8 +1160,10 @@
 
   loadStatus();
   loadLog();
+  loadPending();
   loadFinance();
   setInterval(loadStatus, 60000);
+  setInterval(loadPending, 60000);
   setInterval(loadFinance, 60000);
 
   // Deja orb — an animated node network, blue, reacting to listening/speaking.
