@@ -920,8 +920,15 @@
       } else {
         conversationActive = false; // manual click is single-turn; only the wake word starts a standing conversation
         clearSafetyTimer();
-        if(wakeRec){ try{ wakeRec.stop(); }catch(e){} }
-        beginCapture();
+        if(wakeRec){
+          // Give the mic a beat to actually release before capture grabs it
+          // — starting captureRec while wakeRec is still tearing down is
+          // what was causing the mic to grab, then immediately drop again.
+          try{ wakeRec.stop(); }catch(e){}
+          setTimeout(() => beginCapture(), 250);
+        } else {
+          beginCapture();
+        }
       }
     });
 
