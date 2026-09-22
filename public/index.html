@@ -834,12 +834,26 @@
     let wakeWanted = wakeToggle ? wakeToggle.checked : false;
     let wakeRestartTimer = null;
 
+    // Chrome's SpeechRecognition ends its underlying session after any short
+    // pause even with continuous=true \u2014 that's real speech-engine behavior,
+    // not something continuous mode overrides. So captureRec.onend fires
+    // constantly mid-conversation, not just when the user is actually done.
+    // These two flags tell onend which case it is: intentionalStop means WE
+    // decided the turn is over (silence timer, manual stop, safety cap,
+    // wake toggle off) and it should wrap up for real; otherwise it's just
+    // the engine's own endpoint cutoff and we restart immediately, folding
+    // what was said into accumulatedTranscript first so nothing is lost.
+    let intentionalStop = false;
+    let fatalError = false;
+    let accumulatedTranscript = '';
+
     function clearSilenceTimer(){ clearTimeout(silenceTimer); silenceTimer = null; }
     function clearSafetyTimer(){ clearTimeout(safetyTimer); safetyTimer = null; }
     function armSafetyTimer(){
       clearSafetyTimer();
       safetyTimer = setTimeout(() => {
         conversationActive = false;
+        intentionalStop = true;
         try{ captureRec.stop(); }catch(e){}
         stateEl.textContent = 'Ready';
         startWakeListening();
@@ -864,26 +878,38 @@
       if(window.dejaOrbSetState) window.dejaOrbSetState('listening');
     };
     captureRec.onresult = (ev) => {
-      let transcript = '';
+      let sessionTranscript = '';
       for(let i = 0; i < ev.results.length; i++){
-        transcript += ev.results[i][0].transcript;
+        sessionTranscript += ev.results[i][0].transcript;
       }
-      input.value = transcript;
+      input.value = (accumulatedTranscript + ' ' + sessionTranscript).trim();
       clearSilenceTimer();
-      silenceTimer = setTimeout(() => { try{ captureRec.stop(); }catch(e){} }, SILENCE_MS);
+      silenceTimer = setTimeout(() => { intentionalStop = true; try{ captureRec.stop(); }catch(e){} }, SILENCE_MS);
     };
-    captureRec.onerror = () => {
-      clearSilenceTimer();
-      mode = 'idle';
-      micBtn.classList.remove('listening');
-      avatar.classList.remove('listening');
-      if(window.dejaOrbSetState) window.dejaOrbSetState('idle');
-      stateEl.textContent = 'Ready';
-      conversationActive = false;
-      clearSafetyTimer();
-      startWakeListening();
+    captureRec.onerror = (ev) => {
+      // Fatal errors (mic blocked, permission revoked) should actually stop;
+      // everything else (including plain 'no-speech', which can legitimately
+      // happen between words) is left for onend to treat as a restart.
+      if(ev.error === 'not-allowed' || ev.error === 'audio-capture' || ev.error === 'service-not-allowed'){
+        fatalError = true;
+      }
     };
     captureRec.onend = () => {
+      if(!intentionalStop && !fatalError){
+        accumulatedTranscript = input.value;
+        setTimeout(() => {
+          try{ captureRec.start(); }
+          catch(e){ finishCapture(); }
+        }, 50);
+        return;
+      }
+      finishCapture();
+    };
+
+    function finishCapture(){
+      intentionalStop = false;
+      fatalError = false;
+      accumulatedTranscript = '';
       clearSilenceTimer();
       micBtn.classList.remove('listening');
       avatar.classList.remove('listening');
@@ -905,17 +931,21 @@
       }
       stateEl.textContent = 'Ready';
       form.requestSubmit();
-    };
+    }
 
     function beginCapture(){
       if(mode === 'capture') return;
       try{ window.speechSynthesis.cancel(); }catch(e){}
       input.value = '';
+      accumulatedTranscript = '';
+      intentionalStop = false;
+      fatalError = false;
       try{ captureRec.start(); }catch(e){ /* already starting */ }
     }
 
     micBtn.addEventListener('click', () => {
       if(mode === 'capture'){
+        intentionalStop = true;
         captureRec.stop();
       } else {
         conversationActive = false; // manual click is single-turn; only the wake word starts a standing conversation
@@ -980,7 +1010,7 @@
           if(wakeRec){ try{ wakeRec.stop(); }catch(e){} }
           conversationActive = false;
           clearSafetyTimer();
-          if(mode === 'capture'){ try{ captureRec.stop(); }catch(e){} }
+          if(mode === 'capture'){ intentionalStop = true; try{ captureRec.stop(); }catch(e){} }
         }
       });
     }
