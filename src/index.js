@@ -467,7 +467,7 @@ async function dispatchTool(env, name, input) {
 // configured yet or fails — see the dashboard's speak() function.
 
 // TODO(Bryce): swap for the real voice picked via the ElevenLabs MCP connector.
-const ELEVENLABS_VOICE_ID = "21m00Tcm4TlvDq8ikWAM"; // placeholder default voice
+const ELEVENLABS_VOICE_ID = "hpp4J3VqNfWAUOO0d1Us"; // testing: Bella, from Bryce's ElevenLabs "My Voices"
 
 async function elevenLabsSpeak(env, text) {
   const apiKey = await env.ELEVENLABS_API_KEY.get();
