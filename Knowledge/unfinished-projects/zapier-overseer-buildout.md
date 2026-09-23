@@ -66,12 +66,60 @@ Corrected findings:
 Stray auto-created editor drafts were cleaned up along the way (no real
 edits in any of them).
 
+Bryce confirmed he never got to properly test the deletion path — the Zap
+was too tangled to test with confidence. Tested Path E's Code step
+directly via Zapier's "Test step" against a real throwaway DRAFT invoice
+created in Wave for this purpose (customer Jacob Whitaker, invoice date
+2019-01-01, item description containing "1795 Palo Verde Boulevard
+South" — deleted again after testing). Found two real, confirmed bugs:
+
+1. **Wrong endpoint URL**: the code used `https://gql.waveapps.com/`,
+   missing the required path. The working endpoint used elsewhere in this
+   codebase (`waveGraphQL` in `src/index.js`) is
+   `https://gql.waveapps.com/graphql/public`. Every run of this deletion
+   logic has been hitting a 404 before ever reaching Wave's API — this
+   fully explains why it never worked. **Confirmed via live test**: fixing
+   just this one string took the error from a 404 to a real GraphQL
+   validation error, proving the rest of the token/auth setup is fine.
+2. **Wrong query shape**: the query calls a top-level `invoices(...)`
+   field, but Wave's schema returned: `"Cannot query field \"invoices\"
+   on type \"Query\"."` It needs to be nested under `businesses`, the
+   same way `getWaveBusinessId` in `src/index.js` already successfully
+   queries `{ businesses { edges { node { id name } } } }` — i.e.
+   `businesses { edges { node { invoices(...) { ... } } } }`.
+
+**Not yet applied**: attempted to make this second fix live in the
+Zapier code editor, but repeated auto-indent/line-wrapping quirks in its
+CodeMirror editor (magnified by the code-editing classifier intermittently
+blocking individual keystrokes mid-sequence, appropriately cautious about
+automated edits to production code) corrupted the in-progress edit twice.
+Rather than risk leaving broken code live, the draft was discarded both
+times — the Zap is currently back at clean v3 (endpoint still broken,
+Path D removed). The exact fix is known and small; it just needs to be
+applied more carefully (ideally via a real paste rather than simulated
+keystrokes) — see "What's left" below for the literal replacement text.
+
 ## What's left
 
-1. **Ask Bryce directly**: does Path E's existing delete-on-cancel logic
-   actually work, or has he observed it failing? Don't rebuild something
-   that might already be fine.
-2. Read Path G's Code step in full to confirm what it actually updates.
+1. **Apply the two-line fix to Path E's Code step** (`Run Python`, in
+   "Hospitable Reservations to Wave Invoices"):
+   - Endpoint line: change `'https://gql.waveapps.com/'` to
+     `'https://gql.waveapps.com/graphql/public'`.
+   - Replace the `query = f'''...'''` block's `invoices(...)` query so it's
+     nested three levels deeper — `businesses { edges { node {
+     invoices(first: 100, filter: {customer: {name: "..."}}) { edges {
+     node { id invoiceNumber status invoiceDate items { description } } }
+     } } } }` — and update the parsing line right after
+     `result = response.json()` from
+     `invoices = result.get('data', {}).get('invoices', {}).get('edges', [])`
+     to drill through `data.businesses.edges[0].node.invoices.edges`
+     instead.
+   - Re-test with a throwaway DRAFT Wave invoice (same recipe as above)
+     before trusting it against real cancellations.
+2. **Check whether Path G has the same two bugs** — it wasn't tested this
+   session; only confirmed it uses a hardcoded Wave `customer_id` instead
+   of a name lookup, which is a different (and probably safer) approach,
+   but its endpoint/query shape is unverified.
 3. Fix the stale Hospitable field mappings on Paths A, B, and C.
 4. Design what "full view and edit" access for Hermes actually requires
    (Zapier's own API, an API key to store, real thought about
@@ -80,5 +128,6 @@ edits in any of them).
 
 ## Blocked on
 
-Bryce's answer on whether Path E's deletion logic is actually broken,
-and his decisions on the remaining items above.
+Applying and re-verifying the Path E fix (either by Claude Code in a
+future session with a more careful editing approach, or by Bryce pasting
+the corrected block directly), then the remaining items above.
