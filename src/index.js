@@ -930,6 +930,7 @@ async function handleAsk(request, env) {
 
   const messages = [{ role: "user", content: message }];
   let reply = "";
+  let toolFailed = false;
 
   for (let turn = 0; turn < 5; turn++) {
     const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
@@ -977,6 +978,7 @@ async function handleAsk(request, env) {
           toolResult = await dispatchTool(env, toolUse.name, toolUse.input);
         } catch (err) {
           toolResult = `Failed: ${err.message}`;
+          toolFailed = true;
         }
       }
       toolResults.push({ type: "tool_result", tool_use_id: toolUse.id, content: toolResult });
@@ -987,7 +989,15 @@ async function handleAsk(request, env) {
 
   await appendLog(env, { who: "Deja", what: message.slice(0, 140) });
 
-  return json({ reply });
+  // Tells the dashboard's voice UI whether to keep the mic open for a
+  // follow-up (a tool failed, or Deja's reply is a question needing an
+  // answer) versus closing it after a plain "done" confirmation. This is
+  // a heuristic on the finished text, not something the model states
+  // explicitly — good enough for real phrasing, imperfect for a reply
+  // that needs a follow-up but happens not to end in "?".
+  const keepListening = toolFailed || /\?\s*$/.test(reply.trim());
+
+  return json({ reply, keepListening });
 }
 
 async function handleReservation(request, env) {
