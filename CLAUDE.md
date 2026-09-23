@@ -8,7 +8,12 @@ deliberate, see `Knowledge/decisions/2026-09-21-deja-rename-scope.md`.
 Read `Knowledge/systems/systems-overview.md` first for how everything
 actually fits together. The rest of `Knowledge/` is a shared Obsidian
 vault between Bryce, Deja, and Claude Code — check it before assuming how
-something works.
+something works. It's the durable second brain for this project: real
+findings, decisions, and operational lessons belong there, not only in a
+session's own transcript or memory. `Knowledge/agent-notes/` in
+particular holds tool-level operational knowledge (Zapier/Wave/Calendar
+browser-automation quirks, safe testing patterns) that's worth a read
+before doing hands-on work in those tools again.
 
 **Deploys automatically.** Any push to `main` redeploys the live Worker
 within about a minute. There's no test suite or staging environment.
