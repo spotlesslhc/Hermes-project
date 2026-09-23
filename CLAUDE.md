@@ -51,3 +51,23 @@ happened, why, and what to do differently next time. This is how the
 shared vault keeps a future session (Claude Code or Deja) from repeating
 it. It's a documentation-only change to `Knowledge/`, so it can go
 straight to `main` like any other vault note.
+
+## Check for unfinished projects at the start of every session
+
+`Knowledge/unfinished-projects/` tracks multi-step initiatives that span
+more than one session, so nothing gets dropped between conversations —
+see `Knowledge/unfinished-projects/README.md` for what belongs here and
+what doesn't (routine site-edit requests still go through
+`Knowledge/tasks/`, not here).
+
+At the start of a session in this repo, check that folder (via `ls`/glob)
+for any `.md` files. If any exist, read them to pick up where things left
+off before starting new work — treat "what's left" in each one as live
+context, not just history.
+
+As work progresses: update a project's file with new status, and delete
+it entirely once it's completely finished. Unlike `Knowledge/tasks/`,
+there's no `done/` archive here — a finished initiative's lasting
+knowledge belongs in a proper `Knowledge/systems/` or `Knowledge/decisions/`
+doc instead, not left behind as a stale WIP tracker. Create a new file
+whenever a new multi-step initiative starts.
