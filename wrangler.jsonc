@@ -33,6 +33,16 @@
       "binding": "ELEVENLABS_API_KEY",
       "store_id": "8f15d6429b5741f9ac32e05415413a65",
       "secret_name": "ELEVENLABS_API_KEY"
+    },
+    {
+      "binding": "SPOTIFY_CLIENT_ID",
+      "store_id": "8f15d6429b5741f9ac32e05415413a65",
+      "secret_name": "SPOTIFY_CLIENT_ID"
+    },
+    {
+      "binding": "SPOTIFY_CLIENT_SECRET",
+      "store_id": "8f15d6429b5741f9ac32e05415413a65",
+      "secret_name": "SPOTIFY_CLIENT_SECRET"
     }
   ],
   "vars": {
