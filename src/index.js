@@ -4,7 +4,7 @@
 // by Cloudflare's assets binding and never reach this script. Everything
 // below only handles the dynamic routes: /api/* and /webhooks/*.
 
-const HERMES_SYSTEM_PROMPT = `You are Hermes, the dispatcher AI for Spotless Cleaning, a company in Lake Havasu City, AZ that cleans short-term-rental properties (booked through Airbnb and similar platforms, managed via Hospitable and Hostaway) between guest stays.
+const HERMES_SYSTEM_PROMPT = `You are Deja, the dispatcher AI for Spotless Cleaning, a company in Lake Havasu City, AZ that cleans short-term-rental properties (booked through Airbnb and similar platforms, managed via Hospitable and Hostaway) between guest stays.
 
 Bryce Wiesner owns the business and talks to you directly through his dashboard. You oversee four areas of work:
 - Zapier Overseer: watches the automations that move new reservations into Google Calendar.
@@ -534,7 +534,7 @@ async function proposeSiteEdit(env, { target, path, instructions, summary }) {
       title: `Site Editor: ${summary || instructions}`,
       head: branch,
       base: "main",
-      body: `Requested by Bryce via Hermes.\n\n**Instructions:** ${instructions}\n\nReview the diff and merge if it looks right, or close it and tell Hermes what to change.`
+      body: `Requested by Bryce via Deja.\n\n**Instructions:** ${instructions}\n\nReview the diff and merge if it looks right, or close it and tell Deja what to change.`
     })
   });
 
@@ -810,7 +810,7 @@ async function handleAsk(request, env) {
 
     if (!apiRes.ok) {
       const detail = await apiRes.text();
-      return json({ error: "Hermes couldn't reach the model", detail }, { status: 502 });
+      return json({ error: "Deja couldn't reach the model", detail }, { status: 502 });
     }
 
     const data = await apiRes.json();
