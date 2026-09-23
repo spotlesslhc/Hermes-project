@@ -268,6 +268,16 @@
   .log-row .t{color:var(--ink-soft); font-variant-numeric:tabular-nums;}
   .log-row .who{font-weight:500; color:var(--teal-deep);}
   .log-row .what{color:var(--ink);}
+  .log-row.compact{grid-template-columns:72px 1fr;}
+  .log-empty{padding:14px 16px; font-size:12.5px; color:var(--ink-soft);}
+
+  /* Activity — one list per agent */
+  .activity-grid{
+    display:grid; grid-template-columns:repeat(3,1fr); gap:14px;
+  }
+  @media (max-width:960px){ .activity-grid{grid-template-columns:repeat(2,1fr);} }
+  @media (max-width:720px){ .activity-grid{grid-template-columns:1fr;} }
+  .activity-col-title{font-size:13px; font-weight:500; color:var(--ink-soft); margin-bottom:10px;}
 
   /* Pending Actions */
   .pending-list{display:flex; flex-direction:column; gap:10px; margin-bottom:8px;}
@@ -574,13 +584,39 @@
     <div class="hint">Most recent first</div>
   </div>
 
-  <div class="log" id="logList">
-    <div class="log-row"><span class="t">9:14 AM</span><span class="who">Scheduler</span><span class="what">Flagged 214 Sunset Ave turnover — no cleaner assigned yet, guest checks out 11:00 AM</span></div>
-    <div class="log-row"><span class="t">8:52 AM</span><span class="who">Zapier Overseer</span><span class="what">Confirmed reservation Zap ran cleanly — new booking added to calendar for 402 Countryshire Rd</span></div>
-    <div class="log-row"><span class="t">7:30 AM</span><span class="who">Bookkeeper</span><span class="what">Logged supply purchase — $38.12, cleaning solution restock</span></div>
-    <div class="log-row"><span class="t">Yesterday</span><span class="who">Bookkeeper</span><span class="what">Recorded payout for last week's completed turnovers</span></div>
-    <div class="log-row"><span class="t">Yesterday</span><span class="who">Site Editor</span><span class="what">No action needed — site unchanged</span></div>
-    <div class="log-row"><span class="t">2 days ago</span><span class="who">Zapier Overseer</span><span class="what">Caught a delayed webhook and retried it successfully</span></div>
+  <div class="activity-grid">
+    <div>
+      <div class="activity-col-title">Deja</div>
+      <div class="log" id="logList-deja">
+        <div class="log-row compact"><span class="t">9:02 AM</span><span class="what">Answered Bryce's question about this week's turnovers</span></div>
+      </div>
+    </div>
+    <div>
+      <div class="activity-col-title">Zapier Overseer</div>
+      <div class="log" id="logList-zapier_overseer">
+        <div class="log-row compact"><span class="t">8:52 AM</span><span class="what">Confirmed reservation Zap ran cleanly — new booking added to calendar for 402 Countryshire Rd</span></div>
+        <div class="log-row compact"><span class="t">2 days ago</span><span class="what">Caught a delayed webhook and retried it successfully</span></div>
+      </div>
+    </div>
+    <div>
+      <div class="activity-col-title">Scheduler</div>
+      <div class="log" id="logList-scheduler">
+        <div class="log-row compact"><span class="t">9:14 AM</span><span class="what">Flagged 214 Sunset Ave turnover — no cleaner assigned yet, guest checks out 11:00 AM</span></div>
+      </div>
+    </div>
+    <div>
+      <div class="activity-col-title">Bookkeeper</div>
+      <div class="log" id="logList-bookkeeper">
+        <div class="log-row compact"><span class="t">7:30 AM</span><span class="what">Logged supply purchase — $38.12, cleaning solution restock</span></div>
+        <div class="log-row compact"><span class="t">Yesterday</span><span class="what">Recorded payout for last week's completed turnovers</span></div>
+      </div>
+    </div>
+    <div>
+      <div class="activity-col-title">Site Editor</div>
+      <div class="log" id="logList-site_editor">
+        <div class="log-row compact"><span class="t">Yesterday</span><span class="what">No action needed — site unchanged</span></div>
+      </div>
+    </div>
   </div>
 
   <footer>
@@ -659,19 +695,37 @@
     }catch(e){ /* Not deployed yet, or offline — leave the preview data showing. */ }
   }
 
+  const ACTIVITY_LISTS = {
+    'Deja': 'logList-deja',
+    'Zapier Overseer': 'logList-zapier_overseer',
+    'Scheduler': 'logList-scheduler',
+    'Bookkeeper': 'logList-bookkeeper',
+    'Site Editor': 'logList-site_editor'
+  };
+
   async function loadLog(){
     try{
       const res = await fetch('/api/log');
       if(!res.ok) return;
       const entries = await res.json();
       if(!entries.length) return;
-      const container = document.getElementById('logList');
-      container.innerHTML = entries.map(e => `
-        <div class="log-row">
-          <span class="t">${timeAgo(e.time)}</span>
-          <span class="who">${e.who || 'Deja'}</span>
-          <span class="what">${e.what || ''}</span>
-        </div>`).join('');
+      const grouped = {};
+      Object.keys(ACTIVITY_LISTS).forEach(who => grouped[who] = []);
+      entries.forEach(e => {
+        const who = ACTIVITY_LISTS[e.who] ? e.who : 'Deja';
+        grouped[who].push(e);
+      });
+      Object.entries(ACTIVITY_LISTS).forEach(([who, id]) => {
+        const container = document.getElementById(id);
+        const rows = grouped[who];
+        container.innerHTML = rows.length
+          ? rows.map(e => `
+            <div class="log-row compact">
+              <span class="t">${timeAgo(e.time)}</span>
+              <span class="what">${e.what || ''}</span>
+            </div>`).join('')
+          : '<div class="log-empty">No activity yet</div>';
+      });
     }catch(e){ /* Not deployed yet, or offline — leave the preview data showing. */ }
   }
 
