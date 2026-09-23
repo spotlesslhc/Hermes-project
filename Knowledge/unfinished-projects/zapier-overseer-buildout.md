@@ -24,25 +24,50 @@ webhook that exists, `/webhooks/reservation` (`src/index.js:747`),
 updates the **Scheduler's** status when a new booking comes in — it has
 nothing to do with Zapier Overseer today.
 
+Then walked the real Zapier account directly (Bryce signed the browser
+in) and documented all three Zaps in full — see
+[[zapier-automations]]. Found real, concrete issues along the way:
+
+- The invoicing Zap's Path D has logically impossible conditions (likely
+  dead code, an email step that probably never fires).
+- Its Path C has a stale field-mapping warning, and its own logic
+  (invoicing *on cancellation*) is worth confirming with Bryce rather
+  than assuming it's right.
+- The raw-API-token Code steps Bryce described for deleting/updating
+  invoices on cancellation **do not currently exist** in that Zap — needs
+  Bryce to confirm whether that's a real gap or lives elsewhere.
+- A third, disabled Zap ("1328 Piper Dr...") is sitting as an incomplete,
+  unpublishable draft and is very likely obsolete now that the main
+  calendar Zap has an "Other properties (fallback)" branch.
+- Multiple stale Hospitable field mappings recur across Zaps — Hospitable
+  likely changed its webhook payload shape at some point without every
+  downstream mapping catching up.
+- Bryce clarified what "oversight" means to him: Zapier Overseer should
+  be able to **view and edit any part of Zapier** — full access, not just
+  failure notifications. (He also said Zapier holds no sensitive data;
+  that's not quite right — the cleartext API token from
+  [[2026-09-22-zapier-wave-token-cleartext]] lives in one of these Zaps —
+  flagged to him directly.)
+
+Two stray auto-created drafts (from opening the Zap editors to inspect
+them) were cleaned up; a third, pre-existing incomplete draft on the
+disabled Zap was left alone since it may be someone's unfinished work.
+
 ## What's left
 
-Need from Bryce before any code gets written:
-
-1. How many distinct Zaps touch cleaning events, and what does each one
-   do end-to-end? (Is the reservation → Google Calendar Zap the same one
-   as the invoice-creation/deletion Zap discussed for the Bookkeeper, or
-   separate?)
-2. What's the trigger source — Hospitable, Hostaway, or both?
-3. What should "oversight" actually mean — surfacing real Zap *failures*
-   (Zapier can call a webhook on step error, which could feed a new
-   `/webhooks/zapier-error` endpoint), or something broader like flagging
-   when expected reservations stop arriving?
-
-Alternative: Bryce offered to let Claude look at the Zapier dashboard
-directly (same browser-driven approach as Wave) instead of describing it
-in chat — not yet decided which.
+1. Confirm with Bryce: is Path D really dead code, is Path C's
+   cancel-triggers-invoice logic intentional, and does the described
+   invoice delete/update-on-cancellation logic exist somewhere else or
+   need to be (re)built?
+2. Confirm the disabled "1328 Piper Dr" Zap is truly superseded, then
+   delete it.
+3. Fix the stale Hospitable field mappings across the affected Zaps.
+4. Design what "full view and edit" access for Hermes actually requires
+   (Zapier's own API, an API key to store, and — given the account holds
+   at least one live secret already — real thought about scope/blast
+   radius) before wiring anything into `src/index.js`. Given the found
+   bugs, real edit access arguably needs *more* care here, not less.
 
 ## Blocked on
 
-Bryce describing the real Zap setup, or agreeing to a browser-driven
-walkthrough of the Zapier dashboard instead.
+Bryce's decisions on the items above.
