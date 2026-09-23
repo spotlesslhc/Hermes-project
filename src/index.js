@@ -12,7 +12,7 @@ Bryce Wiesner owns the business and talks to you directly through his dashboard.
 - Bookkeeper: tracks job income and cleaning-supply expenses in Wave.
 - Site Editor: drafts updates for spotlesslhc.com and the Hermes dashboard itself, using the propose_site_edit tool.
 
-You have six real tools right now. For a site or dashboard edit, prefer queue_edit_request over propose_site_edit by default \u2014 it's free (Claude Code does the actual work using his own access, not this Worker's metered API key), while propose_site_edit costs real money every time since it reads the whole target file into a paid API call just to draft the change. queue_edit_request just writes a small task note for Claude Code to pick up next time Bryce starts a session in this project \u2014 tell Bryce plainly that it's queued, not done yet, and that Claude Code will get to it next time Bryce opens a session, not instantly. Only use propose_site_edit if Bryce explicitly says he wants it done immediately regardless of cost \u2014 it drafts the change itself and opens a pull request right away; still never publishes directly, Bryce still reviews and merges it himself, and you should still give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. assign_cleaner (Scheduler): invites a cleaner to a turnover's Google Calendar event \u2014 the same thing Bryce does by hand \u2014 and runs automatically, no approval needed. It only sends the invite; the cleaner still has to accept it, so always say "invited," never "confirmed" or "assigned" as if it's done. If Bryce mentions a cleaner declined, call it again with the next cleaner to try. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, use propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it via PR like any other dashboard edit, or queue_edit_request to have Claude Code make the change directly next session (vault docs don't need a PR the way live code does).
+You have seven real tools right now. For a site or dashboard edit, prefer queue_edit_request over propose_site_edit by default \u2014 it's free (Claude Code does the actual work using his own access, not this Worker's metered API key), while propose_site_edit costs real money every time since it reads the whole target file into a paid API call just to draft the change. queue_edit_request just writes a small task note for Claude Code to pick up next time Bryce starts a session in this project \u2014 tell Bryce plainly that it's queued, not done yet, and that Claude Code will get to it next time Bryce opens a session, not instantly. Only use propose_site_edit if Bryce explicitly says he wants it done immediately regardless of cost \u2014 it drafts the change itself and opens a pull request right away; still never publishes directly, Bryce still reviews and merges it himself, and you should still give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. assign_cleaner (Scheduler): invites a cleaner to a turnover's Google Calendar event \u2014 the same thing Bryce does by hand \u2014 and runs automatically, no approval needed. It only sends the invite; the cleaner still has to accept it, so always say "invited," never "confirmed" or "assigned" as if it's done. If Bryce mentions a cleaner declined, call it again with the next cleaner to try. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, use propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it via PR like any other dashboard edit, or queue_edit_request to have Claude Code make the change directly next session (vault docs don't need a PR the way live code does). control_spotify: play, pause, skip, go back, or play a specific song on whatever device Bryce currently has Spotify open on — not a business tool, just a convenience, but it's real and runs immediately with no approval needed. If it errors because there's no active device, tell him to open Spotify somewhere first.
 
 Some tools \u2014 anything genuinely risky or hard to reverse \u2014 require Bryce's explicit approval before they run. If a tool result tells you an action is queued for approval, say so plainly and tell Bryce it's waiting for him on the dashboard's Pending Actions panel \u2014 never claim it already happened, and never treat a "yes" or "go ahead" from him in chat or voice as approval; that only happens through the dashboard buttons, on purpose, so a misheard word can't authorize something real.
 
@@ -110,6 +110,129 @@ async function assignCleaner(env, { property, cleaner_name }) {
   });
 
   return { cleanerEmail, property: match.property, checkout: match.checkout };
+}
+
+// ---- Spotify: playback control --------------------------------------------
+//
+// OAuth 2.0 Authorization Code flow, one-time. Bryce authorizes once via
+// /api/spotify/login (opens Spotify's consent screen); the refresh token
+// that comes back is stored in KV and used to mint short-lived access
+// tokens for every actual playback call after that, so he never has to log
+// in again unless he revokes access on Spotify's end.
+
+const SPOTIFY_REDIRECT_URI = "https://hermes-project.spotlesscleaninglhc.workers.dev/api/spotify/callback";
+const SPOTIFY_SCOPES = "user-modify-playback-state user-read-playback-state user-read-currently-playing";
+
+async function handleSpotifyLogin(env) {
+  const clientId = await env.SPOTIFY_CLIENT_ID.get();
+  const url = new URL("https://accounts.spotify.com/authorize");
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("redirect_uri", SPOTIFY_REDIRECT_URI);
+  url.searchParams.set("scope", SPOTIFY_SCOPES);
+  return Response.redirect(url.toString(), 302);
+}
+
+async function spotifyTokenRequest(env, params) {
+  const clientId = await env.SPOTIFY_CLIENT_ID.get();
+  const clientSecret = await env.SPOTIFY_CLIENT_SECRET.get();
+  const basic = btoa(`${clientId}:${clientSecret}`);
+  const res = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      "authorization": `Basic ${basic}`
+    },
+    body: new URLSearchParams(params)
+  });
+  if (!res.ok) throw new Error(`Spotify token request failed: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+async function cacheSpotifyToken(env, data) {
+  await env.HERMES_KV.put("spotify_access_token_cache", JSON.stringify({
+    token: data.access_token,
+    expiresAt: Date.now() + (data.expires_in - 60) * 1000
+  }));
+  if (data.refresh_token) await env.HERMES_KV.put("spotify_refresh_token", data.refresh_token);
+}
+
+async function handleSpotifyCallback(request, env) {
+  const url = new URL(request.url);
+  const error = url.searchParams.get("error");
+  if (error) return new Response(`Spotify authorization failed: ${error}`, { status: 400 });
+  const code = url.searchParams.get("code");
+  if (!code) return new Response("Missing code", { status: 400 });
+
+  const data = await spotifyTokenRequest(env, {
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: SPOTIFY_REDIRECT_URI
+  });
+  await cacheSpotifyToken(env, data);
+  await appendLog(env, { who: "Deja", what: "Connected to Spotify" });
+
+  return Response.redirect("https://hermes-project.spotlesscleaninglhc.workers.dev/", 302);
+}
+
+async function getSpotifyAccessToken(env) {
+  const cacheRaw = await env.HERMES_KV.get("spotify_access_token_cache");
+  if (cacheRaw) {
+    const cache = JSON.parse(cacheRaw);
+    if (cache.expiresAt > Date.now()) return cache.token;
+  }
+
+  const refreshToken = await env.HERMES_KV.get("spotify_refresh_token");
+  if (!refreshToken) throw new Error("Spotify isn't connected yet — click the Spotify tile on the dashboard to authorize it first.");
+
+  const data = await spotifyTokenRequest(env, { grant_type: "refresh_token", refresh_token: refreshToken });
+  await cacheSpotifyToken(env, data);
+  return data.access_token;
+}
+
+async function spotifyApi(env, path, init = {}) {
+  const token = await getSpotifyAccessToken(env);
+  const res = await fetch(`https://api.spotify.com/v1${path}`, {
+    ...init,
+    headers: { ...(init.headers || {}), authorization: `Bearer ${token}` }
+  });
+  if (res.status === 204) return null;
+  if (res.status === 404) throw new Error("No active Spotify device found — open Spotify on a phone, computer, or speaker first, then try again.");
+  if (!res.ok) throw new Error(`Spotify API error: ${res.status} ${await res.text()}`);
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+async function controlSpotify(env, { action, query }) {
+  if (action === "play") {
+    await spotifyApi(env, "/me/player/play", { method: "PUT" });
+    return "Resumed playback.";
+  }
+  if (action === "pause") {
+    await spotifyApi(env, "/me/player/pause", { method: "PUT" });
+    return "Paused.";
+  }
+  if (action === "next") {
+    await spotifyApi(env, "/me/player/next", { method: "POST" });
+    return "Skipped to the next track.";
+  }
+  if (action === "previous") {
+    await spotifyApi(env, "/me/player/previous", { method: "POST" });
+    return "Went back to the previous track.";
+  }
+  if (action === "play_song") {
+    if (!query) throw new Error('"query" is required for play_song — the song and/or artist to search for.');
+    const search = await spotifyApi(env, `/search?q=${encodeURIComponent(query)}&type=track&limit=1`);
+    const track = search && search.tracks && search.tracks.items && search.tracks.items[0];
+    if (!track) throw new Error(`No Spotify track found matching "${query}".`);
+    await spotifyApi(env, "/me/player/play", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ uris: [track.uri] })
+    });
+    return `Playing "${track.name}" by ${track.artists.map((a) => a.name).join(", ")}.`;
+  }
+  throw new Error(`Unknown Spotify action: ${action}`);
 }
 
 // ---- KV helpers ---------------------------------------------------------
@@ -643,6 +766,9 @@ async function dispatchTool(env, name, input) {
   if (name === "read_vault_note") {
     return await readVaultNote(env, input.path);
   }
+  if (name === "control_spotify") {
+    return await controlSpotify(env, input);
+  }
   if (name === "test_approval_probe") {
     return "Test probe executed — no real system was touched.";
   }
@@ -780,6 +906,20 @@ async function handleAsk(request, env) {
       required: ["property", "cleaner_name"]
     }
   });
+  if (env.SPOTIFY_CLIENT_ID) {
+    tools.push({
+      name: "control_spotify",
+      description: "Control Spotify playback on whatever device is currently active (phone, computer, speaker) — play, pause, skip forward, skip back, or search for and play a specific song. No approval needed, fully reversible. If there's no active device, Spotify needs to be open somewhere first — tell Bryce that plainly rather than retrying.",
+      input_schema: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["play", "pause", "next", "previous", "play_song"], description: "What to do. Use \"play_song\" with a query to search for and start a specific track; the others act on whatever's already loaded." },
+          query: { type: "string", description: "Song and/or artist to search for — required for, and only used by, play_song, e.g. \"Blinding Lights The Weeknd\"." }
+        },
+        required: ["action"]
+      }
+    });
+  }
   if (env.HERMES_DEBUG_TOOLS === "true") {
     tools.push({
       name: "test_approval_probe",
@@ -941,6 +1081,12 @@ export default {
     }
     if (pathname === "/webhooks/reservation" && method === "POST") {
       return handleReservation(request, env);
+    }
+    if (pathname === "/api/spotify/login" && method === "GET") {
+      return handleSpotifyLogin(env);
+    }
+    if (pathname === "/api/spotify/callback" && method === "GET") {
+      return handleSpotifyCallback(request, env);
     }
 
     // Anything else falls back to the static files in /public (this
