@@ -739,7 +739,7 @@ async function handleAsk(request, env) {
     messages.push({ role: "user", content: toolResults });
   }
 
-  await appendLog(env, { who: "Hermes", what: message.slice(0, 140) });
+  await appendLog(env, { who: "Deja", what: message.slice(0, 140) });
 
   return json({ reply });
 }
