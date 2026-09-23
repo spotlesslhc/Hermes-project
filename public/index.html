@@ -813,6 +813,7 @@
       const text = res.ok ? data.reply : ('Deja hit a snag: ' + (data.error || 'unknown error'));
       reply.textContent = text;
       stateEl.textContent = 'Ready';
+      if(window.DejaVoice) window.DejaVoice.setExpectFollowUp(res.ok ? !!data.keepListening : true);
       if(res.ok){
         loadLog();
         loadPending();
@@ -828,6 +829,7 @@
       reply.classList.remove('pending');
       reply.textContent = "Couldn't reach Deja — this dashboard may not be deployed yet.";
       stateEl.textContent = 'Ready';
+      if(window.DejaVoice) window.DejaVoice.setExpectFollowUp(true);
       finish();
     }finally{
       sendBtn.disabled = false;
@@ -881,13 +883,17 @@
     });
   }
 
-  // Voice input: "Hey Deja" starts listening; while a conversation is active,
-  // each reply automatically reopens listening again - no need to repeat the
-  // wake word - until you say "goodbye". A resettable silence timer (not the
-  // browser's own uncontrollable cutoff) gives a couple of extra seconds to
-  // pause mid-sentence before a reply gets sent. A hard safety cap disengages
-  // a standing conversation after a few minutes no matter what, in case
-  // something (background noise, a stuck recognizer) keeps it open.
+  // Voice input: "Hey Deja" starts listening. While a conversation is
+  // active, a reply that's a question or a tool error reopens listening
+  // automatically - no need to repeat the wake word - but a plain "done"
+  // confirmation closes the mic back down to wake-word-only (see
+  // DejaVoice.setExpectFollowUp, driven by /api/ask's keepListening flag).
+  // Saying "goodbye" also ends the conversation early. A resettable silence
+  // timer (not the browser's own uncontrollable cutoff) gives a couple of
+  // extra seconds to pause mid-sentence before a reply gets sent. A hard
+  // safety cap disengages a standing conversation after a few minutes no
+  // matter what, in case something (background noise, a stuck recognizer)
+  // keeps it open.
   (function setUpVoice(){
     const micBtn = document.getElementById('micBtn');
     const avatar = document.getElementById('askAvatar');
@@ -1098,15 +1104,21 @@
     }
 
     // Bridge so the ask-form submit handler can tell us a reply finished
-    // speaking, and - as long as a conversation is active and the wake
-    // toggle is still on - keep listening without repeating the wake word.
+    // speaking, and whether it needs a follow-up. A plain "done"
+    // confirmation closes the mic back down to wake-word-only listening;
+    // a question or a tool error keeps the conversation open so Bryce can
+    // just keep talking, no need to repeat "Hey Deja".
+    let expectFollowUp = false;
     window.DejaVoice = {
       speaking: false,
+      setExpectFollowUp(value){ expectFollowUp = !!value; },
       onSpeakDone(){
         mode = 'idle';
-        if(conversationActive && wakeWanted){
+        if(conversationActive && wakeWanted && expectFollowUp){
           beginCapture();
         } else {
+          conversationActive = false;
+          clearSafetyTimer();
           startWakeListening();
         }
       }
