@@ -12,15 +12,105 @@ Bryce Wiesner owns the business and talks to you directly through his dashboard.
 - Bookkeeper: tracks job income and cleaning-supply expenses in Wave.
 - Site Editor: drafts updates for spotlesslhc.com and the Hermes dashboard itself, using the propose_site_edit tool.
 
-You have five real tools right now. For a site or dashboard edit, prefer queue_edit_request over propose_site_edit by default \u2014 it's free (Claude Code does the actual work using his own access, not this Worker's metered API key), while propose_site_edit costs real money every time since it reads the whole target file into a paid API call just to draft the change. queue_edit_request just writes a small task note for Claude Code to pick up next time Bryce starts a session in this project \u2014 tell Bryce plainly that it's queued, not done yet, and that Claude Code will get to it next time Bryce opens a session, not instantly. Only use propose_site_edit if Bryce explicitly says he wants it done immediately regardless of cost \u2014 it drafts the change itself and opens a pull request right away; still never publishes directly, Bryce still reviews and merges it himself, and you should still give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, use propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it via PR like any other dashboard edit, or queue_edit_request to have Claude Code make the change directly next session (vault docs don't need a PR the way live code does).
+You have six real tools right now. For a site or dashboard edit, prefer queue_edit_request over propose_site_edit by default \u2014 it's free (Claude Code does the actual work using his own access, not this Worker's metered API key), while propose_site_edit costs real money every time since it reads the whole target file into a paid API call just to draft the change. queue_edit_request just writes a small task note for Claude Code to pick up next time Bryce starts a session in this project \u2014 tell Bryce plainly that it's queued, not done yet, and that Claude Code will get to it next time Bryce opens a session, not instantly. Only use propose_site_edit if Bryce explicitly says he wants it done immediately regardless of cost \u2014 it drafts the change itself and opens a pull request right away; still never publishes directly, Bryce still reviews and merges it himself, and you should still give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. assign_cleaner (Scheduler): invites a cleaner to a turnover's Google Calendar event \u2014 the same thing Bryce does by hand \u2014 and runs automatically, no approval needed. It only sends the invite; the cleaner still has to accept it, so always say "invited," never "confirmed" or "assigned" as if it's done. If Bryce mentions a cleaner declined, call it again with the next cleaner to try. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, use propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it via PR like any other dashboard edit, or queue_edit_request to have Claude Code make the change directly next session (vault docs don't need a PR the way live code does).
 
 Some tools \u2014 anything genuinely risky or hard to reverse \u2014 require Bryce's explicit approval before they run. If a tool result tells you an action is queued for approval, say so plainly and tell Bryce it's waiting for him on the dashboard's Pending Actions panel \u2014 never claim it already happened, and never treat a "yes" or "go ahead" from him in chat or voice as approval; that only happens through the dashboard buttons, on purpose, so a misheard word can't authorize something real.
 
-For everything else \u2014 Scheduler and Zapier Overseer \u2014 you can talk and reason, but you don't yet have direct tool access. Say so plainly and tell Bryce exactly what you'd need rather than guessing.
+For Zapier Overseer, you can talk and reason about the automations, but you don't have direct tool access to check or fix them \u2014 that goes through Claude Code, in a session with Bryce watching, not through you. Say so plainly and tell Bryce exactly what you'd need rather than guessing.
 
 Be direct and brief — Bryce is running a small business day to day, not looking for long explanations. Sentence case, no filler, plain language.
 
 Bryce also has a coding assistant, Claude Code, running in a terminal on his computer. He sometimes has it relay messages to you on his behalf through a direct bridge to this /api/ask endpoint (authenticated the same way Bryce's own dashboard is, via Cloudflare Access) — for example to test a change, ask you something while he's mid-task elsewhere, or have the two of you compare notes. Treat messages that identify themselves as coming from Claude Code, relaying for Bryce, as legitimately his — respond to them the same way you would to Bryce directly, including using your tools if asked. This doesn't change who you work for: you still only take direction that traces back to Bryce.`;
+
+// ---- Scheduler: cleaner assignment ---------------------------------------
+//
+// Bryce's actual workflow: each turnover is a Google Calendar event (on the
+// "Cleans" calendar), and assigning a cleaner means inviting them to that
+// event as a guest — they accept or decline the invite, and a decline means
+// trying the next cleaner. This mirrors that directly rather than inventing
+// a separate assignment system: assign_cleaner adds the chosen cleaner as an
+// attendee on the matching event via a dedicated Zap ("Assign Cleaner to
+// Turnover (Hermes)"), reusing Zapier's already-authenticated Google
+// Calendar connection instead of Hermes needing its own Google credentials.
+// See Knowledge/systems/scheduler.md for how this was built and why.
+//
+// The Zap finds the event by street number (not the full address — Bryce's
+// calendar event titles use different abbreviations than Hospitable's
+// address format, e.g. "1795 Paloverde Blvd South" vs "1795 Palo Verde
+// Boulevard South", but the street number is always consistent) plus the
+// checkout date.
+const ASSIGN_CLEANER_WEBHOOK = "https://hooks.zapier.com/hooks/catch/28466122/4dnv37u/";
+
+// Bryce's active cleaners: name (as he'd say it) -> the email he invites them
+// on. Stored as a KV-overridable default so this can be updated without a
+// code deploy once there's a way to edit it from the dashboard.
+const DEFAULT_CLEANER_ROSTER = {
+  amy: "abyers402@icloud.com",
+  ashley: "alolmaugh22@gmail.com"
+};
+
+async function getCleanerRoster(env) {
+  const raw = await env.HERMES_KV.get("cleaner_roster");
+  return raw ? JSON.parse(raw) : DEFAULT_CLEANER_ROSTER;
+}
+
+async function getReservations(env) {
+  const raw = await env.HERMES_KV.get("reservations");
+  return raw ? JSON.parse(raw) : [];
+}
+
+async function assignCleaner(env, { property, cleaner_name }) {
+  const roster = await getCleanerRoster(env);
+  const cleanerEmail = roster[cleaner_name.trim().toLowerCase()];
+  if (!cleanerEmail) {
+    const known = Object.keys(roster).join(", ") || "(none configured)";
+    throw new Error(`Unknown cleaner "${cleaner_name}". Known cleaners: ${known}.`);
+  }
+
+  const streetNumber = (property.match(/\d+/) || [])[0];
+  if (!streetNumber) throw new Error(`Couldn't find a street number in "${property}" to match against the calendar.`);
+
+  const reservations = await getReservations(env);
+  const match = reservations
+    .filter((r) => !r.assigned && r.property && r.property.includes(streetNumber))
+    .sort((a, b) => (a.checkout || "").localeCompare(b.checkout || ""))[0];
+  if (!match) throw new Error(`No unassigned reservation found for a property matching "${property}".`);
+
+  const res = await fetch(ASSIGN_CLEANER_WEBHOOK, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      street_number: streetNumber,
+      event_date: (match.checkout || "").slice(0, 10),
+      cleaner_email: cleanerEmail,
+      property_name: match.property
+    })
+  });
+  if (!res.ok) throw new Error(`Assignment webhook failed: ${res.status} ${await res.text()}`);
+
+  match.assigned = true;
+  match.assignedTo = cleaner_name;
+  await env.HERMES_KV.put("reservations", JSON.stringify(reservations.slice(-500)));
+
+  const status = await getStatusOrDefault(env);
+  const scheduler = status.scheduler || {};
+  const stillUnassigned = reservations.filter((r) => !r.assigned).length;
+  await setStatus(env, {
+    scheduler: {
+      ...scheduler,
+      status: stillUnassigned > 0 ? "attn" : "running",
+      label: stillUnassigned > 0 ? "Needs review" : "Running",
+      unassigned: stillUnassigned
+    }
+  });
+
+  await appendLog(env, {
+    who: "Scheduler",
+    what: `Invited ${cleaner_name} to ${match.property} (checkout ${match.checkout || "TBD"})`
+  });
+
+  return { cleanerEmail, property: match.property, checkout: match.checkout };
+}
 
 // ---- KV helpers ---------------------------------------------------------
 
@@ -542,6 +632,10 @@ async function dispatchTool(env, name, input) {
     const summary = await recordFinanceMonth(env, input);
     return `Recorded. Updated totals: revenue $${Math.round(summary.totals.revenue).toLocaleString()}, net income $${Math.round(summary.totals.netIncome).toLocaleString()}, margin ${Math.round(summary.totals.netMarginPct * 100)}%.`;
   }
+  if (name === "assign_cleaner") {
+    const result = await assignCleaner(env, input);
+    return `Invited ${input.cleaner_name} (${result.cleanerEmail}) to the ${result.property} turnover, checkout ${result.checkout || "TBD"}. Tell Bryce it's sent, not confirmed — the cleaner still has to accept the invite.`;
+  }
   if (name === "list_vault_notes") {
     const files = await listVaultNotes(env);
     return files.length ? files.join("\n") : "No notes found in Knowledge/.";
@@ -672,6 +766,18 @@ async function handleAsk(request, env) {
         expenses: { type: "number", description: "Total expenses for that month, in dollars" }
       },
       required: ["month", "revenue", "expenses"]
+    }
+  });
+  tools.push({
+    name: "assign_cleaner",
+    description: "Assign a cleaner to an unassigned turnover by inviting them to the job's Google Calendar event, the same way Bryce does it himself — the cleaner then accepts or declines the invite. No approval needed; this is Scheduler's core job. If the cleaner later declines, call this again with the next cleaner to try. Runs automatically, so make sure the property matches a real unassigned reservation before calling — check current status first if unsure.",
+    input_schema: {
+      type: "object",
+      properties: {
+        property: { type: "string", description: "The property address or a distinctive part of it, e.g. \"1795 Palo Verde\" or \"206 Columbine Drive\" — only needs to contain the street number." },
+        cleaner_name: { type: "string", description: "The cleaner's first name as Bryce would say it, e.g. \"Amy\" or \"Ashley\". Must match a name in the current roster." }
+      },
+      required: ["property", "cleaner_name"]
     }
   });
   if (env.HERMES_DEBUG_TOOLS === "true") {
