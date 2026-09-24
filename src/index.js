@@ -1390,9 +1390,13 @@ export default {
     }
     if (pathname === "/api/debug/wave-schema" && method === "GET") {
       try {
-        const data = await waveGraphQL(env, `query($o: String!) {
-          output: __type(name: $o) { fields { name type { kind name ofType { kind name } } } }
-        }`, { o: "InvoiceCreateOutput" });
+        const businessId = await getWaveBusinessId(env);
+        const data = await waveGraphQL(env, `query($businessId: ID!) {
+          business(id: $businessId) {
+            customers(page: 1, pageSize: 100) { edges { node { id name } } }
+            products(page: 1, pageSize: 200) { edges { node { id name unitPrice } } }
+          }
+        }`, { businessId });
         return json(data);
       } catch (err) {
         return json({ error: err.message }, { status: 502 });
