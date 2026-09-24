@@ -96,6 +96,40 @@ a 10-second ask each time real sample data is needed.
   [[2026-09-22-kv-list-quota-exhaustion]]. Check specific known keys with
   `get` instead.
 
+## Gmail settings (forwarding addresses)
+
+- Gmail serves at least two different "Forwarding and POP/IMAP" settings
+  layouts, and reloading the same URL doesn't reliably pick one — a
+  compact layout with a plain `<input>` for the forwarding address, and a
+  modal-based layout with a proper "Add a forwarding address" button.
+  **Only the modal-based "Add a forwarding address" flow actually sends
+  a verification email**; typing a brand-new address directly into the
+  compact layout's field always fails with "Invalid forwarding address"
+  even though visually it looks like a normal text box.
+- Even when the modal-based flow is used correctly (address typed,
+  Next/Continue clicked with the mouse, Google's identity
+  re-verification completed), it **silently failed every time it was
+  driven from this session's built-in browser pane** — the dialog just
+  closed with no confirmation, no error, nothing sent. It only worked
+  once the exact same steps were run through Claude in the user's real
+  Chrome browser instead (see [[unfinished-projects/turno-property-zapier-buildout]]
+  for the case this came up in). If a Gmail forwarding-address or
+  filter-creation flow seems to silently fail in the built-in browser
+  pane, hand it to Claude in Chrome rather than continuing to retry.
+- Filter creation (Settings → Filters and Blocked Addresses → Create a
+  new filter) can also silently no-op if the "Create filter" button
+  click lands on the wrong DOM node (e.g. a `generic` element wrapping
+  the real button rather than the button itself) — the modal closes but
+  nothing is added to the filter list. Always verify by reloading
+  Settings → Filters afterward and confirming the new rule is actually
+  listed, don't assume the click worked.
+- The verification email Google sends lands wherever the *destination*
+  address's inbox is — for a Zapier Email Parser mailbox, that's its
+  History page (`parser.zapier.com/mailboxes/<id>/history/`), not
+  anywhere in the Gmail account being configured. The confirmation link
+  in that email is safe to click directly (it only confirms the mailbox
+  accepts forwards, no login involved).
+
 ## Google Calendar (Bryce's actual setup)
 
 - Event **color is not a cleaner indicator** — Bryce uses it to flag

@@ -80,31 +80,30 @@ design so it doesn't fire on unrelated event edits.
   consistent "Reservation:" / "Listing:" block. More robust than
   fighting pixel-perfect drag-selection, and the email format is
   consistent enough (see the saved template) to regex reliably.
-- Attempted to set up automatic Gmail forwarding from
-  `bryce55777@gmail.com` to the parser mailbox (so future reservation
-  emails don't need manual forwarding). **Blocked**: went through
-  Gmail's "Add a forwarding address" flow twice, including Bryce
-  completing Google's identity-reverification step both times, but no
-  confirmation email ever arrived at the parser mailbox to complete
-  verification. Cause unclear — possibly a spam-filtering issue on
-  Zapier's side, possibly something about Gmail's UI (it inconsistently
-  rendered two different Forwarding-settings layouts across reloads,
-  narrow-viewport related). Handed back to Bryce to try adding the
-  forwarding address directly himself.
+- **Gmail auto-forward is now live.** The "Add a forwarding address"
+  flow silently failed (dialog just closed, no confirmation email) every
+  time it was driven from this session's built-in browser pane — even
+  with Bryce completing Google's identity re-verification. It only
+  actually went through once Bryce ran the same steps through **Claude
+  in his real Chrome browser** instead; see
+  [[agent-notes/browser-automation-notes]] for the lesson. Once the
+  forwarding address was verified (confirmation link clicked from the
+  parser mailbox), a targeted Gmail filter was created:
+  `from:(support@hospitable.com)` → forward to
+  `i0zblclu@robot.zapier.com`. Only Hospitable's notification emails
+  forward — nothing else in Bryce's personal inbox is affected, and nothing
+  needs to be forwarded by hand anymore.
 
 ## Still open / blocked
 
-1. **Gmail auto-forward not yet working** (see above) — until it is,
-   Bryce has to manually forward each new reservation email to
-   `i0zblclu@robot.zapier.com`, or the Zap simply won't see new
-   reservations.
-2. **Wave invoice customer**: still need the customer name/details this
+1. **Wave invoice customer**: still need the customer name/details this
    property's invoices should be billed under (different from Bryce's
    other properties). Asked, not yet answered.
-3. **Zac's email**: not yet available; needed before the third fallback
+2. **Zac's email**: not yet available; needed before the third fallback
    tier can actually work.
-4. **The actual Zap hasn't been built yet** — only the Email Parser
-   mailbox/template exists. Still to do once the above unblock:
+3. **The actual Zap hasn't been built yet** — only the Email Parser
+   mailbox/template and the Gmail-side trigger pipeline exist. Still to
+   do once the above unblock:
    - Trigger: New email in the parser mailbox.
    - Code step: regex-extract address, check-in, check-out, reservation
      code from the raw body.
