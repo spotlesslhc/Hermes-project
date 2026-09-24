@@ -1390,12 +1390,12 @@ export default {
     }
     if (pathname === "/api/debug/wave-schema" && method === "GET") {
       try {
-        const data = await waveGraphQL(env, `{
-          __type1: __type(name: "Business") { fields { name type { name kind ofType { name kind } } } }
-          __type2: __type(name: "Product") { fields { name type { name kind ofType { name kind } } } }
-          __type3: __type(name: "InvoiceCreateInput") { inputFields { name type { name kind ofType { name kind } } } }
-          __type4: __type(name: "InvoiceItemCreateInput") { inputFields { name type { name kind ofType { name kind } } } }
-        }`);
+        const data = await waveGraphQL(env, `query($a: String!, $b: String!, $c: String!, $d: String!) {
+          __type1: __type(name: $a) { fields { name type { name kind ofType { name kind } } } }
+          __type2: __type(name: $b) { fields { name type { name kind ofType { name kind } } } }
+          __type3: __type(name: $c) { inputFields { name type { name kind ofType { name kind } } } }
+          __type4: __type(name: $d) { inputFields { name type { name kind ofType { name kind } } } }
+        }`, { a: "Business", b: "Product", c: "InvoiceCreateInput", d: "InvoiceItemCreateInput" });
         return json(data);
       } catch (err) {
         return json({ error: err.message }, { status: 502 });
