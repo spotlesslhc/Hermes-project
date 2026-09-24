@@ -41,6 +41,22 @@ Corrected findings:
 - **Path D was genuinely dead code** (impossible AND conditions across
   all three properties) — Bryce confirmed he didn't know what it was for
   and asked it be removed. **Done**, published as v3.
+- **Paths A/B/C's "Find or Create Customer" steps could silently create a
+  duplicate Wave customer** if the name/email search ever missed —
+  confirmed live in the editor (the "Create Wave Customer if it doesn't
+  exist yet?" checkbox was on for all three). Bryce was explicit
+  (2026-09-24, while this same fix was being applied to the new Turno
+  automation): every property's invoicing must find existing
+  records and never create new ones. **Fixed and published as v4** —
+  unchecked the create toggle on all three paths (Path A: QueensBay
+  Unit #324, Path B: 206 Columbine Drive, Path C: 1795 Palo Verde
+  Boulevard South), leaving Wave's default "stopped: halted" behavior on
+  a miss instead of a silent create. Re-tested each step live afterward —
+  all three still correctly find the real "Jacob Whitaker" customer
+  (#97496415, created 2025-10-06, not a fresh duplicate). The invoice
+  line items themselves were already safe — each `Create Invoice` step
+  references a specific existing Wave product by name (not a
+  find-or-create field), so no fix was needed there.
 - **The invoice-deletion logic Bryce described does exist** (Path E: any
   cancelled reservation → Code-by-Zapier Python → find a DRAFT Wave
   invoice matching checkout date + property, delete it). It hardcodes
