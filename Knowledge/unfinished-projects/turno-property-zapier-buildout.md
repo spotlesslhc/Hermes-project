@@ -135,6 +135,31 @@ real means submitting the OAuth app for Google's verification (needs a
 public privacy policy page and a review that can take days) — not done,
 flagged here as a real follow-up, not forgotten.
 
+**Connection verified end to end (2026-09-24).** Two real bugs turned up
+getting here, both fixed:
+1. The scope originally requested (`calendar.events`) can read/write
+   events but can't list the account's calendars, which
+   `getCleansCalendarId` needs — a real 403
+   `ACCESS_TOKEN_SCOPE_INSUFFICIENT` error on `calendarList.list`. Fixed
+   by widening `GOOGLE_CALENDAR_SCOPE` to the plain
+   `.../auth/calendar` scope (covers both). Bryce had to reconnect after
+   this shipped, since Google doesn't retroactively grant a wider scope
+   to an already-issued refresh token.
+2. Bryce has two Google accounts and connected with both back to back
+   before the scope fix — since the Worker only stores one refresh
+   token, whichever account authorizes *last* is the one that's active.
+   The wrong one won the first time. Confirmed `spotlesscleaninglhc@gmail.com`
+   is the one that actually owns the "Cleans" calendar; that's the one
+   he reconnected with last, and the account is displayed on the
+   dashboard tile so this is easy to get wrong again if anyone else ever
+   touches this.
+3. Added a small read-only diagnostic route, `/api/google-calendar/status`,
+   specifically to verify this without creating any real calendar events
+   or sending a real cleaner an invite during testing — confirms it can
+   find "Cleans" by name and returns its calendar ID. Worth reusing next
+   time this connection needs checking rather than waiting for a real
+   reservation to prove it out.
+
 ## Wave invoice customer — confirmed
 
 Bryce provided "Sparks / Tim Sparks / 2211 Sahara Drive" as the billing
