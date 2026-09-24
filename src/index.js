@@ -235,6 +235,274 @@ async function controlSpotify(env, { action, query }) {
   throw new Error(`Unknown Spotify action: ${action}`);
 }
 
+// ---- Turno property (2211 Sahara Drive): automatic cleaner assignment ----
+//
+// Unlike Bryce's other properties, this one is managed by its owner
+// ("Urlaub Properties") on their own Hospitable account — Bryce isn't on
+// that integration, just gets an emailed notification per reservation
+// (forwarded to a Zapier Email Parser mailbox, see
+// Knowledge/unfinished-projects/turno-property-zapier-buildout.md). The
+// cascade + same-day-conflict postponement logic below is genuinely
+// branchy, so it lives here as real code instead of a maze of Zapier
+// Paths — which is also why this needed its own Google Calendar OAuth
+// connection (Deja's other calendar actions all reuse Zapier's
+// already-authenticated connection instead).
+//
+// Google's policy for an unverified OAuth app requesting a sensitive
+// scope (calendar.events is sensitive) caps refresh tokens at 7 days.
+// Full verification removes that cap but needs a public privacy policy
+// and a review; not done yet. Until then, Bryce needs to re-visit the
+// "Connect Google Calendar" dashboard tile roughly weekly, or this stops
+// working silently. Flagged in the vault as a real follow-up.
+
+const GOOGLE_CALENDAR_REDIRECT_URI = "https://hermes-project.spotlesscleaninglhc.workers.dev/api/google-calendar/callback";
+const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+const TURNO_PROPERTY_ADDRESS = "2211 Sahara Drive";
+const TURNO_CLEANER_CASCADE = ["amy", "ashley"];
+const TURNO_MAX_POSTPONE_DAYS = 2;
+
+async function handleGoogleCalendarLogin(env) {
+  const clientId = await env.GOOGLE_CALENDAR_CLIENT_ID.get();
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("redirect_uri", GOOGLE_CALENDAR_REDIRECT_URI);
+  url.searchParams.set("scope", GOOGLE_CALENDAR_SCOPE);
+  url.searchParams.set("access_type", "offline");
+  url.searchParams.set("prompt", "consent");
+  return Response.redirect(url.toString(), 302);
+}
+
+async function googleCalendarTokenRequest(env, params) {
+  const clientId = await env.GOOGLE_CALENDAR_CLIENT_ID.get();
+  const clientSecret = await env.GOOGLE_CALENDAR_CLIENT_SECRET.get();
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ ...params, client_id: clientId, client_secret: clientSecret })
+  });
+  if (!res.ok) throw new Error(`Google token request failed: ${res.status} ${await res.text()}`);
+  return res.json();
+}
+
+async function cacheGoogleCalendarToken(env, data) {
+  await env.HERMES_KV.put("google_calendar_access_token_cache", JSON.stringify({
+    token: data.access_token,
+    expiresAt: Date.now() + (data.expires_in - 60) * 1000
+  }));
+  if (data.refresh_token) await env.HERMES_KV.put("google_calendar_refresh_token", data.refresh_token);
+}
+
+async function handleGoogleCalendarCallback(request, env) {
+  const url = new URL(request.url);
+  const error = url.searchParams.get("error");
+  if (error) return new Response(`Google Calendar authorization failed: ${error}`, { status: 400 });
+  const code = url.searchParams.get("code");
+  if (!code) return new Response("Missing code", { status: 400 });
+
+  const data = await googleCalendarTokenRequest(env, {
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: GOOGLE_CALENDAR_REDIRECT_URI
+  });
+  await cacheGoogleCalendarToken(env, data);
+  await appendLog(env, { who: "Scheduler", what: "Connected to Google Calendar for the Turno property automation" });
+
+  return Response.redirect("https://hermes-project.spotlesscleaninglhc.workers.dev/", 302);
+}
+
+async function getGoogleCalendarAccessToken(env) {
+  const cacheRaw = await env.HERMES_KV.get("google_calendar_access_token_cache");
+  if (cacheRaw) {
+    const cache = JSON.parse(cacheRaw);
+    if (cache.expiresAt > Date.now()) return cache.token;
+  }
+  const refreshToken = await env.HERMES_KV.get("google_calendar_refresh_token");
+  if (!refreshToken) throw new Error("Google Calendar isn't connected yet — click the Connect Google Calendar tile on the dashboard.");
+  const data = await googleCalendarTokenRequest(env, { grant_type: "refresh_token", refresh_token: refreshToken });
+  await cacheGoogleCalendarToken(env, data);
+  return data.access_token;
+}
+
+async function googleCalendarApi(env, path, init = {}) {
+  const token = await getGoogleCalendarAccessToken(env);
+  const res = await fetch(`https://www.googleapis.com/calendar/v3${path}`, {
+    ...init,
+    headers: { ...(init.headers || {}), authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) throw new Error(`Google Calendar API error: ${res.status} ${await res.text()}`);
+  if (res.status === 204) return null;
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+async function getCleansCalendarId(env) {
+  const cached = await env.HERMES_KV.get("cleans_calendar_id");
+  if (cached) return cached;
+  const list = await googleCalendarApi(env, "/users/me/calendarList");
+  const match = (list.items || []).find((c) => (c.summary || "").trim().toLowerCase() === "cleans");
+  if (!match) throw new Error('No calendar named "Cleans" found on this Google account.');
+  await env.HERMES_KV.put("cleans_calendar_id", match.id);
+  return match.id;
+}
+
+// Parses the raw forwarded-email body/subject Zapier's Email Parser hands
+// back. Regexed directly off the raw text rather than the Parser's
+// highlight-a-field UI, which proved too fragile to drag-select precisely
+// — see Knowledge/agent-notes/browser-automation-notes.md.
+function parseTurnoReservationEmail(text) {
+  const checkinMatch = text.match(/Check-in\s*:\s*([^\n]+)/i);
+  const checkoutMatch = text.match(/Check-out\s*:\s*([^\n]+)/i);
+  const codeMatch = text.match(/Reservation code:\s*(\S+)/i);
+  if (!checkinMatch) throw new Error("Couldn't find a Check-in line in the reservation email.");
+
+  const checkinDate = parseHospitableDate(checkinMatch[1].trim());
+  const checkoutDate = checkoutMatch ? parseHospitableDate(checkoutMatch[1].trim()) : null;
+  return {
+    checkinDate,
+    checkoutDate,
+    reservationCode: codeMatch ? codeMatch[1].trim() : null
+  };
+}
+
+// Hospitable's dates have no year, e.g. "Friday, October 23 at 4:00 PM" —
+// assume the current year, then roll to next year if that's already more
+// than a month in the past (handles reservations parsed near New Year's).
+function parseHospitableDate(text) {
+  const cleaned = text.replace(/^[A-Za-z]+,\s*/, "").replace(/\s*at\s*/, " ");
+  const now = new Date();
+  let date = new Date(`${cleaned} ${now.getFullYear()}`);
+  if (isNaN(date.getTime())) throw new Error(`Couldn't parse date: "${text}"`);
+  if (date.getTime() < now.getTime() - 30 * 24 * 60 * 60 * 1000) {
+    date = new Date(`${cleaned} ${now.getFullYear() + 1}`);
+  }
+  return date;
+}
+
+function toDateOnly(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date, days) {
+  const copy = new Date(date);
+  copy.setDate(copy.getDate() + days);
+  return copy;
+}
+
+async function isCleanerBusyOnDate(env, calendarId, cleanerEmail, dateOnly) {
+  const timeMin = `${dateOnly}T00:00:00Z`;
+  const timeMax = `${dateOnly}T23:59:59Z`;
+  const data = await googleCalendarApi(
+    env,
+    `/calendars/${encodeURIComponent(calendarId)}/events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true`
+  );
+  return (data.items || []).some((event) => {
+    if (event.status === "cancelled") return false;
+    return (event.attendees || []).some((a) => a.email === cleanerEmail && a.responseStatus !== "declined");
+  });
+}
+
+// Before postponing, make sure a later guest isn't already due to check
+// in — if so, this turnover can't slip without risking an unready house.
+async function hasUpcomingCheckinNearby(env, calendarId, fromDateExclusive, throughDate) {
+  const timeMin = `${toDateOnly(addDays(fromDateExclusive, 1))}T00:00:00Z`;
+  const timeMax = `${toDateOnly(throughDate)}T23:59:59Z`;
+  const data = await googleCalendarApi(
+    env,
+    `/calendars/${encodeURIComponent(calendarId)}/events?timeMin=${timeMin}&timeMax=${timeMax}&singleEvents=true&q=${encodeURIComponent(TURNO_PROPERTY_ADDRESS)}`
+  );
+  return (data.items || []).some((event) => event.status !== "cancelled");
+}
+
+async function findOrCreateTurnoEvent(env, calendarId, { dateOnly, reservationCode, checkinLabel }) {
+  const key = `turno_event:${reservationCode}`;
+  const existingId = await env.HERMES_KV.get(key);
+  if (existingId) {
+    const event = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events/${existingId}`);
+    if (event.start?.date !== dateOnly) {
+      return googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events/${existingId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ start: { date: dateOnly }, end: { date: toDateOnly(addDays(new Date(dateOnly), 1)) } })
+      });
+    }
+    return event;
+  }
+
+  const created = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      summary: `Clean: ${TURNO_PROPERTY_ADDRESS} (check-in by ${checkinLabel})`,
+      description: `Turno property, reservation code ${reservationCode}. Auto-assigned by Deja.`,
+      start: { date: dateOnly },
+      end: { date: toDateOnly(addDays(new Date(dateOnly), 1)) }
+    })
+  });
+  await env.HERMES_KV.put(key, created.id);
+  return created;
+}
+
+async function inviteCleanerToEvent(env, calendarId, event, cleanerEmail) {
+  const attendees = (event.attendees || []).filter((a) => a.email !== cleanerEmail);
+  attendees.push({ email: cleanerEmail });
+  return googleCalendarApi(
+    env,
+    `/calendars/${encodeURIComponent(calendarId)}/events/${event.id}?sendUpdates=all`,
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ attendees })
+    }
+  );
+}
+
+async function assignTurnoCleaning(env, { checkinDate, reservationCode }) {
+  const calendarId = await getCleansCalendarId(env);
+  const roster = await getCleanerRoster(env);
+  const checkinLabel = checkinDate.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+  let candidateDate = checkinDate;
+  for (let postponeCount = 0; postponeCount <= TURNO_MAX_POSTPONE_DAYS; postponeCount++) {
+    const dateOnly = toDateOnly(candidateDate);
+    for (const name of TURNO_CLEANER_CASCADE) {
+      const email = roster[name];
+      if (!email) continue;
+      const busy = await isCleanerBusyOnDate(env, calendarId, email, dateOnly);
+      if (!busy) {
+        const event = await findOrCreateTurnoEvent(env, calendarId, { dateOnly, reservationCode, checkinLabel });
+        await inviteCleanerToEvent(env, calendarId, event, email);
+        const note = postponeCount > 0 ? ` (postponed ${postponeCount} day${postponeCount > 1 ? "s" : ""} from the original check-in date — both other cleaners were already booked)` : "";
+        await appendLog(env, { who: "Scheduler", what: `Invited ${name} to clean ${TURNO_PROPERTY_ADDRESS} on ${dateOnly}${note}` });
+        return { cleaner: name, email, date: dateOnly, postponed: postponeCount };
+      }
+    }
+    // Everyone in the cascade is already booked that day.
+    if (postponeCount >= TURNO_MAX_POSTPONE_DAYS) break;
+    const blocked = await hasUpcomingCheckinNearby(env, calendarId, candidateDate, addDays(candidateDate, TURNO_MAX_POSTPONE_DAYS - postponeCount));
+    if (blocked) break;
+    candidateDate = addDays(candidateDate, 1);
+  }
+
+  await appendLog(env, { who: "Scheduler", what: `Couldn't auto-assign a cleaner for ${TURNO_PROPERTY_ADDRESS} (reservation ${reservationCode}) — both cleaners booked and no safe day to postpone to. Needs manual attention.` });
+  throw new Error("Both cleaners are already booked and there's no safe day to postpone to (an upcoming check-in blocks it). Needs manual assignment.");
+}
+
+async function handleTurnoReservationWebhook(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, { status: 400 }); }
+  const emailText = [body.subject, body.body_plain, body.body].filter(Boolean).join("\n");
+  if (!emailText) return json({ error: "Expected subject and/or body_plain in the webhook payload" }, { status: 400 });
+
+  try {
+    const parsed = parseTurnoReservationEmail(emailText);
+    const result = await assignTurnoCleaning(env, parsed);
+    return json({ ok: true, ...result });
+  } catch (err) {
+    return json({ error: err.message }, { status: 500 });
+  }
+}
+
 // ---- KV helpers ---------------------------------------------------------
 
 const DEFAULT_STATUS = {
@@ -1097,6 +1365,15 @@ export default {
     }
     if (pathname === "/api/spotify/callback" && method === "GET") {
       return handleSpotifyCallback(request, env);
+    }
+    if (pathname === "/api/google-calendar/login" && method === "GET") {
+      return handleGoogleCalendarLogin(env);
+    }
+    if (pathname === "/api/google-calendar/callback" && method === "GET") {
+      return handleGoogleCalendarCallback(request, env);
+    }
+    if (pathname === "/webhooks/turno-reservation" && method === "POST") {
+      return handleTurnoReservationWebhook(request, env);
     }
 
     // Anything else falls back to the static files in /public (this

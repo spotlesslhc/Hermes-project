@@ -66,33 +66,74 @@ update) — filtered down to events on the Cleans calendar where the
 invited cleaner's response status is "declined." Needs careful path
 design so it doesn't fire on unrelated event edits.
 
-## Progress so far
+## Architecture pivot: real code in the Worker, not Zapier Paths
 
-- Created a Zapier **Email Parser** mailbox:
-  **`i0zblclu@robot.zapier.com`**. A real sample email (the one above,
-  for 2211 Sahara Drive) has been forwarded there and saved as the
-  mailbox's initial template.
-- Decided **not** to fight the Parser UI's manual text-highlighting tool
-  (dragging to select exact field boundaries proved fragile/imprecise
-  over several attempts) — instead, plan is to pull the raw parsed email
-  body into a **Code by Zapier** step in the actual Zap and regex-extract
-  the address, check-in, check-out, and reservation code from the
-  consistent "Reservation:" / "Listing:" block. More robust than
-  fighting pixel-perfect drag-selection, and the email format is
-  consistent enough (see the saved template) to regex reliably.
-- **Gmail auto-forward is now live.** The "Add a forwarding address"
-  flow silently failed (dialog just closed, no confirmation email) every
-  time it was driven from this session's built-in browser pane — even
-  with Bryce completing Google's identity re-verification. It only
-  actually went through once Bryce ran the same steps through **Claude
-  in his real Chrome browser** instead; see
-  [[agent-notes/browser-automation-notes]] for the lesson. Once the
-  forwarding address was verified (confirmation link clicked from the
-  parser mailbox), a targeted Gmail filter was created:
-  `from:(support@hospitable.com)` → forward to
-  `i0zblclu@robot.zapier.com`. Only Hospitable's notification emails
-  forward — nothing else in Bryce's personal inbox is affected, and nothing
-  needs to be forwarded by hand anymore.
+The original plan below (Code-by-Zapier steps + Paths for the cascade)
+was scrapped once Bryce added the postponement rule ("if more than two
+cleanings on a day, push to the next day or two, as long as no upcoming
+check-in blocks it") — that's genuinely branchy logic, and Bryce agreed
+it belongs as real code in the Worker rather than a maze of Zapier Paths,
+the same call already proven out with the Spotify integration earlier
+this session. This meant giving Deja her own **Google Calendar OAuth
+connection** (a first for Deja — every other calendar action reuses
+Zapier's already-authenticated connection instead) since the Worker
+needs to actually *read* calendar availability, not just fire a
+one-way webhook to a Zapier action.
+
+**What's live now:**
+- Zapier: a small Zap, **"Turno property (2211 Sahara) to Deja"**,
+  published — trigger is "New Email" on the parser mailbox
+  (`i0zblclu@robot.zapier.com`), action is a `Webhooks by Zapier` POST
+  of the raw `subject` + `body_plain` to
+  `https://hermes-project.spotlesscleaninglhc.workers.dev/webhooks/turno-reservation`.
+  That's Zapier's entire job here — no Paths, no Code step.
+- Worker (`src/index.js`, "Turno property automation" section):
+  - `parseTurnoReservationEmail` / `parseHospitableDate` — regex-extract
+    check-in, check-out, and reservation code straight from the raw
+    email text (the Parser's drag-to-highlight field tool proved too
+    fragile to select precisely; see
+    [[agent-notes/browser-automation-notes]]).
+  - `assignTurnoCleaning` — the actual cascade: tries Amy, then Ashley,
+    on the check-in date; if both already have a cleaning that day, and
+    checking the Cleans calendar shows no other reservation checking in
+    within the next 2 days, postpones by moving the event a day at a
+    time (retrying the cascade fresh each day) up to
+    `TURNO_MAX_POSTPONE_DAYS` (2). If truly stuck, logs it to the
+    Activity feed as needing manual attention rather than guessing.
+  - `findOrCreateTurnoEvent` / `inviteCleanerToEvent` — creates (or, on
+    postponement, moves) an all-day event on the Cleans calendar and
+    invites the chosen cleaner via a real Calendar API call, not a
+    Zapier webhook.
+  - Google Calendar OAuth (`handleGoogleCalendarLogin/Callback`,
+    `getGoogleCalendarAccessToken`) — same one-time-authorize,
+    refresh-token-in-KV pattern as Spotify. New "Connect Calendar
+    (Turno)" tile on the dashboard starts it.
+- Google Cloud project **"Hermes Cal managment"** created, Calendar API
+  enabled, OAuth consent screen configured (External, both of Bryce's
+  emails added as test users), OAuth client "Deja Scheduler Worker"
+  created, scope `calendar.events` added. Client ID/secret stored in the
+  Secrets Store as `GOOGLE_CALENDAR_CLIENT_ID` /
+  `GOOGLE_CALENDAR_CLIENT_SECRET`.
+- **Gmail auto-forward is live**: a filter on
+  `from:(support@hospitable.com)` in `bryce55777@gmail.com` forwards
+  matching mail to the parser mailbox automatically — nothing else in
+  Bryce's personal inbox is touched, and nothing needs manual forwarding
+  anymore. (Getting the forwarding address verified took real
+  troubleshooting — the flow silently failed every time it was driven
+  from this session's built-in browser pane, and only worked once Bryce
+  ran it through Claude in his real Chrome browser; see
+  [[agent-notes/browser-automation-notes]].)
+
+**Important known limitation — read this before assuming it "just
+works" indefinitely:** the Google OAuth app is unverified (External,
+Testing-eligible scope is sensitive). Google caps refresh tokens for
+unverified apps requesting sensitive scopes at **7 days**, regardless of
+publish status. Bryce needs to revisit the "Connect Calendar (Turno)"
+tile roughly weekly, or this silently stops working (calls will start
+failing with "Google Calendar isn't connected yet"). Fixing this for
+real means submitting the OAuth app for Google's verification (needs a
+public privacy policy page and a review that can take days) — not done,
+flagged here as a real follow-up, not forgotten.
 
 ## Wave invoice customer — confirmed
 
@@ -113,30 +154,43 @@ customer. Verified directly in Wave (signed in as Bryce, not guessed):
   ("Sparks") against Wave's customer list is reliable — this isn't a new
   or ambiguous customer.
 
-## Still open / blocked
+## Deliberately not built yet (Bryce said to skip for now / not asked)
 
-1. **Zac's email**: not yet available; needed before the third fallback
-   tier can actually work.
-2. **The actual Zap hasn't been built yet** — only the Email Parser
-   mailbox/template and the Gmail-side trigger pipeline exist. Still to
-   do now that both blockers above are cleared:
-   - Trigger: New email in the parser mailbox.
-   - Code step: regex-extract address, check-in, check-out, reservation
-     code from the raw body.
-   - Find/create the calendar event on the Cleans calendar.
-   - Check Amy's availability that day → invite her, or fall through
-     to Ashley → Zac per the cascade above.
-   - Separate path/Zap watching for a decline on one of these events to
-     trigger the next fallback invite.
-   - Wave invoice creation: find customer "Sparks" (#94260584) by name,
-     line item = property address as freeform text, matching the pattern
-     of Bryce's 72 existing invoices for this customer.
-   - Cancellation handling: delete the calendar event and the draft
-     invoice if the reservation is cancelled. Note: the existing
-     invoice-deletion logic (Path E in the invoicing Zap) is
-     itself still broken/unfixed per
-     [[unfinished-projects/zapier-overseer-buildout]] — don't copy it
-     as-is; fix or verify it first.
+- **Zac (third fallback tier)**: cascade is currently just Amy → Ashley
+  per Bryce's explicit "build it without him for now." Once his email
+  exists, add `zac: "<email>"` to `DEFAULT_CLEANER_ROSTER` in
+  `src/index.js` and append `"zac"` to `TURNO_CLEANER_CASCADE` — no
+  other code changes needed, the cascade loop is roster-driven.
+- **Automatic decline handling**: if a cleaner declines the invite after
+  the fact, nothing currently re-triggers the cascade automatically —
+  `isCleanerBusyOnDate` only runs at initial-assignment time. Bryce
+  didn't ask for this in the latest round of requirements (only the
+  postponement rule), so it wasn't built. Would need either a Cloudflare
+  Cron Trigger polling the Cleans calendar for declined invites, or a
+  Zapier "New or Updated Event" trigger calling a new Worker webhook —
+  see the original plan notes below for the reasoning.
+- **Wave invoice creation**: not built. Customer is confirmed (see
+  below) but nobody has said what the per-clean *rate* is for this
+  property — the one sample invoice checked was $150, but inventing a
+  number felt like exactly the kind of guess to avoid. Needs Bryce's
+  input before this piece gets built.
+- **Cancellation handling**: not built (no invoice yet to cancel, and no
+  observed cancellation-email format to parse). The existing
+  invoice-deletion logic elsewhere (Path E in the Hospitable invoicing
+  Zap) is itself still broken/unfixed per
+  [[unfinished-projects/zapier-overseer-buildout]] — don't copy it as-is
+  if this gets built later.
+
+### Original plan notes (superseded, kept for the decline-detection idea)
+
+Detecting a decline automatically was scoped as: Google Calendar's
+Zapier integration has no dedicated "attendee declined" trigger, but its
+**"New or Updated Event" (instant)** trigger fires on any attendee
+response change too (since that's technically an event update) —
+filterable down to events on the Cleans calendar where the invited
+cleaner's response status is "declined." Still the right idea if this
+gets built; just wasn't needed for what Bryce actually asked for this
+round.
 
 ## Why this is tracked here and not just in the task queue
 
