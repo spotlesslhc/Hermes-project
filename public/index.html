@@ -163,6 +163,10 @@
   }
   .section-head .hint{font-size:12.5px; color:var(--ink-soft);}
   .section-head-right{display:flex; align-items:center; gap:14px;}
+  @media (max-width:600px){
+    .section-head{ flex-direction:column; align-items:flex-start; gap:4px; }
+    .section-head-right{ width:100%; justify-content:space-between; }
+  }
 
   .finance-entry{
     display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px;
@@ -297,7 +301,7 @@
     background:var(--paper-raised); border:1px solid var(--line); border-radius:3px;
     padding:18px 20px;
   }
-  .ask-who{display:flex; align-items:center; gap:12px; margin-bottom:14px;}
+  .ask-who{display:flex; align-items:center; flex-wrap:wrap; row-gap:8px; gap:12px; margin-bottom:14px;}
   .ask-avatar{
     width:38px; height:38px; border-radius:50%;
     background:var(--ink); color:var(--paper);
@@ -330,11 +334,20 @@
   .mic-btn.listening{background:var(--amber-deep); border-color:var(--amber-deep); color:#fff; animation:pulse 1.4s ease-in-out infinite;}
   .mic-btn[disabled]{opacity:.35; cursor:not-allowed;}
   .ask-input{
-    flex:1; font-family:inherit; font-size:13.5px;
+    flex:1; min-width:0; font-family:inherit; font-size:13.5px;
     background:var(--paper); border:1px solid var(--line-strong); border-radius:3px;
     padding:9px 12px; color:var(--ink);
   }
   .ask-input:focus-visible{outline:2px solid var(--teal); outline-offset:1px;}
+
+  /* Phones: iOS auto-zooms the page when a focused input's font is under
+     16px, and the mic/theme buttons are small tap targets — fix both
+     without touching how anything looks at desktop widths. */
+  @media (max-width:600px){
+    .ask-input, .finance-entry input{ font-size:16px; }
+    .mic-btn{ width:44px; height:44px; }
+    .voice-toggle input{ width:16px; height:16px; }
+  }
 
   footer{
     max-width:1080px; margin:40px auto 0; padding-top:16px;
@@ -883,6 +896,33 @@
     });
   }
 
+  // iOS (every browser there, since Apple requires them all to use WebKit)
+  // only allows audio/speechSynthesis playback that traces back to a real,
+  // synchronous user gesture. Deja's spoken replies play after an async
+  // fetch, which breaks that chain on the very first reply. Priming both
+  // APIs on the page's first tap - still a genuine user gesture - unlocks
+  // them for the rest of the session so later async playback works.
+  (function unlockAudioForIOS(){
+    let unlocked = false;
+    function unlock(){
+      if(unlocked) return;
+      unlocked = true;
+      try{
+        const silence = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=');
+        silence.play().catch(() => {});
+      }catch(e){}
+      try{
+        if('speechSynthesis' in window){
+          const primer = new SpeechSynthesisUtterance('');
+          primer.volume = 0;
+          window.speechSynthesis.speak(primer);
+        }
+      }catch(e){}
+    }
+    document.addEventListener('touchstart', unlock, { once:true, passive:true });
+    document.addEventListener('pointerdown', unlock, { once:true, passive:true });
+  })();
+
   // Voice input: "Hey Deja" starts listening. While a conversation is
   // active, a reply that's a question or a tool error reopens listening
   // automatically - no need to repeat the wake word - but a plain "done"
@@ -904,8 +944,16 @@
     const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
 
     if(!SpeechRecognitionAPI){
-      micBtn.disabled = true;
-      micBtn.title = "Voice input isn't supported in this browser - try Chrome";
+      // No browser on iOS supports this API at all - Apple requires every
+      // iOS browser (Chrome included) to run on WebKit, which has never
+      // implemented it. That's a platform restriction, not something a
+      // different browser fixes, so hide voice input instead of leaving a
+      // dead mic button; typed chat and spoken replies still work fully.
+      micBtn.style.display = 'none';
+      if(wakeToggle){
+        const wakeLabel = wakeToggle.closest('label');
+        if(wakeLabel) wakeLabel.style.display = 'none';
+      }
       return;
     }
 
