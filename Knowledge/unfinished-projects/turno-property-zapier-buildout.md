@@ -94,16 +94,32 @@ design so it doesn't fire on unrelated event edits.
   forward — nothing else in Bryce's personal inbox is affected, and nothing
   needs to be forwarded by hand anymore.
 
+## Wave invoice customer — confirmed
+
+Bryce provided "Sparks / Tim Sparks / 2211 Sahara Drive" as the billing
+customer. Verified directly in Wave (signed in as Bryce, not guessed):
+
+- Customer **"Sparks"** (business name), contact **Tim Sparks**, Wave
+  customer #**94260584** — already an active, long-standing customer: 72
+  invoices on file, all for this exact property, going back months.
+- The line item on every one of those invoices is plain **freeform
+  text** — the property address ("2211 Sahara Drive") — not a Wave
+  product/service catalog entry. So there's no separate "item" to
+  find-or-create; it's just a text description, same convention as the
+  other properties' invoices.
+- Bryce was explicit: the Zap must **find** this existing customer by
+  name, never create a new one. Since he's already been invoicing this
+  exact customer by hand for months, a plain name-match lookup
+  ("Sparks") against Wave's customer list is reliable — this isn't a new
+  or ambiguous customer.
+
 ## Still open / blocked
 
-1. **Wave invoice customer**: still need the customer name/details this
-   property's invoices should be billed under (different from Bryce's
-   other properties). Asked, not yet answered.
-2. **Zac's email**: not yet available; needed before the third fallback
+1. **Zac's email**: not yet available; needed before the third fallback
    tier can actually work.
-3. **The actual Zap hasn't been built yet** — only the Email Parser
+2. **The actual Zap hasn't been built yet** — only the Email Parser
    mailbox/template and the Gmail-side trigger pipeline exist. Still to
-   do once the above unblock:
+   do now that both blockers above are cleared:
    - Trigger: New email in the parser mailbox.
    - Code step: regex-extract address, check-in, check-out, reservation
      code from the raw body.
@@ -112,7 +128,9 @@ design so it doesn't fire on unrelated event edits.
      to Ashley → Zac per the cascade above.
    - Separate path/Zap watching for a decline on one of these events to
      trigger the next fallback invite.
-   - Wave invoice creation under the correct customer once known.
+   - Wave invoice creation: find customer "Sparks" (#94260584) by name,
+     line item = property address as freeform text, matching the pattern
+     of Bryce's 72 existing invoices for this customer.
    - Cancellation handling: delete the calendar event and the draft
      invoice if the reservation is cancelled. Note: the existing
      invoice-deletion logic (Path E in the invoicing Zap) is
