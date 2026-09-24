@@ -1375,6 +1375,14 @@ export default {
     if (pathname === "/webhooks/turno-reservation" && method === "POST") {
       return handleTurnoReservationWebhook(request, env);
     }
+    if (pathname === "/api/google-calendar/status" && method === "GET") {
+      try {
+        const calendarId = await getCleansCalendarId(env);
+        return json({ connected: true, calendarId });
+      } catch (err) {
+        return json({ connected: false, error: err.message }, { status: 502 });
+      }
+    }
 
     // Anything else falls back to the static files in /public (this
     // shouldn't normally be needed — Cloudflare usually serves matching
