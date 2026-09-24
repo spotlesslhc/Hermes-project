@@ -462,6 +462,56 @@ async function inviteCleanerToEvent(env, calendarId, event, cleanerEmail) {
   );
 }
 
+// Every property already has its own Wave customer and its own catalog
+// item (with its rate already set) -- Bryce was explicit that invoicing
+// must find these existing records by name and never create new ones,
+// since duplicates would fragment his real customer/item history. Both
+// lookups pull the full list and match client-side (Wave's customers/
+// products queries don't support filtering by name server-side).
+async function findWaveCustomerByName(env, name) {
+  const businessId = await getWaveBusinessId(env);
+  const data = await waveGraphQL(env, `query($businessId: ID!) {
+    business(id: $businessId) { customers(page: 1, pageSize: 200) { edges { node { id name } } } }
+  }`, { businessId });
+  const edges = (data.business && data.business.customers && data.business.customers.edges) || [];
+  const match = edges.find((e) => e.node.name.trim().toLowerCase() === name.trim().toLowerCase());
+  if (!match) throw new Error(`No existing Wave customer named "${name}" — refusing to create a new one.`);
+  return match.node.id;
+}
+
+async function findWaveProductByName(env, name) {
+  const businessId = await getWaveBusinessId(env);
+  const data = await waveGraphQL(env, `query($businessId: ID!) {
+    business(id: $businessId) { products(page: 1, pageSize: 300) { edges { node { id name unitPrice } } } }
+  }`, { businessId });
+  const edges = (data.business && data.business.products && data.business.products.edges) || [];
+  const match = edges.find((e) => e.node.name.trim().toLowerCase() === name.trim().toLowerCase());
+  if (!match) throw new Error(`No existing Wave item named "${name}" — refusing to create a new one.`);
+  return match.node;
+}
+
+// Leaves unitPrice unset on the item so Wave applies the item's own
+// already-configured rate, rather than this code guessing or hardcoding one.
+async function createWaveInvoiceForProperty(env, { customerName, productName }) {
+  const businessId = await getWaveBusinessId(env);
+  const customerId = await findWaveCustomerByName(env, customerName);
+  const product = await findWaveProductByName(env, productName);
+  const data = await waveGraphQL(env, `mutation($input: InvoiceCreateInput!) {
+    invoiceCreate(input: $input) { didSucceed inputErrors { message code path } invoice { id } }
+  }`, {
+    input: {
+      businessId,
+      customerId,
+      items: [{ productId: product.id, quantity: 1 }]
+    }
+  });
+  const result = data.invoiceCreate;
+  if (!result.didSucceed) throw new Error(`Wave invoice creation failed: ${JSON.stringify(result.inputErrors)}`);
+  return result.invoice.id;
+}
+
+const TURNO_WAVE_CUSTOMER_NAME = "Sparks";
+
 async function assignTurnoCleaning(env, { checkinDate, reservationCode }) {
   const calendarId = await getCleansCalendarId(env);
   const roster = await getCleanerRoster(env);
@@ -479,7 +529,19 @@ async function assignTurnoCleaning(env, { checkinDate, reservationCode }) {
         await inviteCleanerToEvent(env, calendarId, event, email);
         const note = postponeCount > 0 ? ` (postponed ${postponeCount} day${postponeCount > 1 ? "s" : ""} from the original check-in date — both other cleaners were already booked)` : "";
         await appendLog(env, { who: "Scheduler", what: `Invited ${name} to clean ${TURNO_PROPERTY_ADDRESS} on ${dateOnly}${note}` });
-        return { cleaner: name, email, date: dateOnly, postponed: postponeCount };
+
+        let invoiceId = null;
+        try {
+          invoiceId = await createWaveInvoiceForProperty(env, {
+            customerName: TURNO_WAVE_CUSTOMER_NAME,
+            productName: TURNO_PROPERTY_ADDRESS
+          });
+          await appendLog(env, { who: "Bookkeeper", what: `Created Wave invoice for ${TURNO_PROPERTY_ADDRESS} (reservation ${reservationCode})` });
+        } catch (err) {
+          await appendLog(env, { who: "Bookkeeper", what: `Couldn't create the Wave invoice for ${TURNO_PROPERTY_ADDRESS} (reservation ${reservationCode}): ${err.message}. Cleaner is still invited — this just needs a manual invoice.` });
+        }
+
+        return { cleaner: name, email, date: dateOnly, postponed: postponeCount, invoiceId };
       }
     }
     // Everyone in the cascade is already booked that day.
@@ -669,11 +731,19 @@ async function waveGraphQL(env, query, variables = {}) {
   return body.data;
 }
 
+// This Wave account actually has two businesses on it -- "Personal" and
+// "Spotless Cleaning" -- and picking edges[0] silently grabbed "Personal"
+// (empty: 0 customers, 0 products) instead of the real one. Match by name
+// explicitly rather than trusting list order.
+const WAVE_BUSINESS_NAME = "Spotless Cleaning";
+
 async function getWaveBusinessId(env) {
   const cached = await env.HERMES_KV.get("wave:business_id");
   if (cached) return cached;
   const data = await waveGraphQL(env, `query { businesses { edges { node { id name } } } }`);
-  const id = data.businesses?.edges?.[0]?.node?.id;
+  const edges = data.businesses?.edges || [];
+  const match = edges.find((e) => e.node.name === WAVE_BUSINESS_NAME) || edges[0];
+  const id = match?.node?.id;
   if (!id) throw new Error("No Wave business found for this token");
   await env.HERMES_KV.put("wave:business_id", id);
   return id;
@@ -1388,26 +1458,17 @@ export default {
         return json({ connected: false, error: err.message }, { status: 502 });
       }
     }
-    if (pathname === "/api/debug/wave-schema" && method === "GET") {
+    if (pathname === "/api/wave/status" && method === "GET") {
       try {
-        const businessId = await getWaveBusinessId(env);
-        const businesses = await waveGraphQL(env, `{ businesses { edges { node { id name } } } }`);
-        const data = await waveGraphQL(env, `query($businessId: ID!) {
-          business(id: $businessId) {
-            id
-            name
-            customers(page: 1, pageSize: 100) { edges { node { id name } } }
-            products(page: 1, pageSize: 200) { edges { node { id name unitPrice } } }
-          }
-        }`, { businessId });
-        data.cachedBusinessId = businessId;
-        data.allBusinesses = businesses;
-        return json(data);
+        const [customerId, product] = await Promise.all([
+          findWaveCustomerByName(env, TURNO_WAVE_CUSTOMER_NAME),
+          findWaveProductByName(env, TURNO_PROPERTY_ADDRESS)
+        ]);
+        return json({ connected: true, customerId, productId: product.id, unitPrice: product.unitPrice });
       } catch (err) {
-        return json({ error: err.message }, { status: 502 });
+        return json({ connected: false, error: err.message }, { status: 502 });
       }
     }
-
     // Anything else falls back to the static files in /public (this
     // shouldn't normally be needed — Cloudflare usually serves matching
     // assets before the Worker even runs — but it's a safety net).
