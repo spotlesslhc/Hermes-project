@@ -56,7 +56,12 @@ The dashboard shows:
   keeps listening until he says "goodbye" — see [[voice-and-conversation]]
   for how that actually works and the two real bugs found and fixed getting
   there. The orb itself can also be popped into a floating window that
-  stays on top of other apps — see [[floating-orb]].
+  stays on top of other apps — see [[floating-orb]]. As of 2026-09-23 the
+  whole dashboard, and this chat specifically, also works correctly on
+  Bryce's iPhone — see [[2026-09-23-mobile-dashboard-setup]] for exactly
+  what changed (mic/wake-word input is the one thing that can't work
+  there, a WebKit platform restriction Apple applies to every iOS browser,
+  not a Hermes limitation).
 
 Deja/Hermes can also be reached outside the dashboard: Claude Code can talk
 to her directly through a small bridge script, see [[deja-bridge]]. She can
