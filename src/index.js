@@ -1388,6 +1388,19 @@ export default {
         return json({ connected: false, error: err.message }, { status: 502 });
       }
     }
+    if (pathname === "/api/debug/wave-schema" && method === "GET") {
+      try {
+        const data = await waveGraphQL(env, `{
+          __type1: __type(name: "Business") { fields { name type { name kind ofType { name kind } } } }
+          __type2: __type(name: "Product") { fields { name type { name kind ofType { name kind } } } }
+          __type3: __type(name: "InvoiceCreateInput") { inputFields { name type { name kind ofType { name kind } } } }
+          __type4: __type(name: "InvoiceItemCreateInput") { inputFields { name type { name kind ofType { name kind } } } }
+        }`);
+        return json(data);
+      } catch (err) {
+        return json({ error: err.message }, { status: 502 });
+      }
+    }
 
     // Anything else falls back to the static files in /public (this
     // shouldn't normally be needed — Cloudflare usually serves matching
