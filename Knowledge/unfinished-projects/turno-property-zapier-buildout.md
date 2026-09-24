@@ -160,24 +160,54 @@ getting here, both fixed:
    time this connection needs checking rather than waiting for a real
    reservation to prove it out.
 
-## Wave invoice customer — confirmed
+## Wave invoicing — built and verified (2026-09-24)
 
 Bryce provided "Sparks / Tim Sparks / 2211 Sahara Drive" as the billing
-customer. Verified directly in Wave (signed in as Bryce, not guessed):
+customer, then separately clarified: **every property already has its
+own Wave catalog item with its own rate already set** — the invoice line
+isn't freeform text like an earlier pass at this doc assumed from just
+reading a rendered invoice. Confirmed directly in Wave's Products &
+Services list: an item literally named "2211 Sahara Drive" exists,
+priced at **$150.00**.
 
-- Customer **"Sparks"** (business name), contact **Tim Sparks**, Wave
-  customer #**94260584** — already an active, long-standing customer: 72
-  invoices on file, all for this exact property, going back months.
-- The line item on every one of those invoices is plain **freeform
-  text** — the property address ("2211 Sahara Drive") — not a Wave
-  product/service catalog entry. So there's no separate "item" to
-  find-or-create; it's just a text description, same convention as the
-  other properties' invoices.
-- Bryce was explicit: the Zap must **find** this existing customer by
-  name, never create a new one. Since he's already been invoicing this
-  exact customer by hand for months, a plain name-match lookup
-  ("Sparks") against Wave's customer list is reliable — this isn't a new
-  or ambiguous customer.
+`createWaveInvoiceForProperty` (in `src/index.js`) now runs automatically
+right after a cleaner is successfully invited:
+- Finds customer **"Sparks"** (Wave customer #94260584) by exact
+  case-insensitive name match.
+- Finds product **"2211 Sahara Drive"** by the same kind of match, and
+  leaves `unitPrice` unset on the invoice item so Wave applies the
+  item's own already-configured rate rather than this code specifying
+  one.
+- **Never creates** a customer or product if no match is found — throws
+  instead, per Bryce's explicit requirement, since duplicates would
+  fragment his real records.
+- Doesn't block the cleaner invite if invoicing fails for any reason;
+  logs it separately to Activity as needing a manual invoice.
+- Verified against live Wave data via a permanent, side-effect-free
+  `/api/wave/status` check (same pattern as
+  `/api/google-calendar/status`) — confirmed it finds the exact same
+  customer and $150 item seen in Wave's own UI, without creating
+  anything.
+
+**Real bug found and fixed while building this**: `getWaveBusinessId()`
+(used by every Wave-touching feature in this codebase, not just this
+one) picked `businesses.edges[0]` from the account's business list —
+which happened to be an empty "Personal" business, not "Spotless
+Cleaning". Every customer/product lookup was silently querying the
+wrong business and getting empty results back, with no error to signal
+it. Fixed to match by business name explicitly, and the already-poisoned
+KV cache entry (`wave:business_id`) was cleared so the fix actually took
+effect. Worth knowing if any *other* Wave-related feature in this
+project ever behaved strangely — this could explain it.
+
+**Bryce's follow-up ask**: apply this same find-by-name-never-create
+logic to the *other* properties' invoicing too (the existing "Hospitable
+Reservations to Wave Invoices" Zap covering QueensBay, 206 Columbine,
+1795 Palo Verde) — "they are all set up the same way." That Zap is
+Zapier-native (Wave's own Find/Create Customer and Find/Create Product
+actions), not this Worker code, so it needs a separate check of its
+actual step configuration — see
+[[unfinished-projects/zapier-overseer-buildout]] for that investigation.
 
 ## Deliberately not built yet (Bryce said to skip for now / not asked)
 
@@ -194,11 +224,6 @@ customer. Verified directly in Wave (signed in as Bryce, not guessed):
   Cron Trigger polling the Cleans calendar for declined invites, or a
   Zapier "New or Updated Event" trigger calling a new Worker webhook —
   see the original plan notes below for the reasoning.
-- **Wave invoice creation**: not built. Customer is confirmed (see
-  below) but nobody has said what the per-clean *rate* is for this
-  property — the one sample invoice checked was $150, but inventing a
-  number felt like exactly the kind of guess to avoid. Needs Bryce's
-  input before this piece gets built.
 - **Cancellation handling**: not built (no invoice yet to cancel, and no
   observed cancellation-email format to parse). The existing
   invoice-deletion logic elsewhere (Path E in the Hospitable invoicing
