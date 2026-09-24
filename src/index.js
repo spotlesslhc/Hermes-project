@@ -1390,9 +1390,9 @@ export default {
     }
     if (pathname === "/api/debug/wave-schema" && method === "GET") {
       try {
-        const data = await waveGraphQL(env, `query($m: String!) {
-          mutationType: __type(name: $m) { fields { name type { name kind } } }
-        }`, { m: "Mutation" });
+        const data = await waveGraphQL(env, `query($o: String!) {
+          output: __type(name: $o) { fields { name type { kind name ofType { kind name } } } }
+        }`, { o: "InvoiceCreateOutput" });
         return json(data);
       } catch (err) {
         return json({ error: err.message }, { status: 502 });
