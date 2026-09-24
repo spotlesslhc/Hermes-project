@@ -1391,12 +1391,17 @@ export default {
     if (pathname === "/api/debug/wave-schema" && method === "GET") {
       try {
         const businessId = await getWaveBusinessId(env);
+        const businesses = await waveGraphQL(env, `{ businesses { edges { node { id name } } } }`);
         const data = await waveGraphQL(env, `query($businessId: ID!) {
           business(id: $businessId) {
+            id
+            name
             customers(page: 1, pageSize: 100) { edges { node { id name } } }
             products(page: 1, pageSize: 200) { edges { node { id name unitPrice } } }
           }
         }`, { businessId });
+        data.cachedBusinessId = businessId;
+        data.allBusinesses = businesses;
         return json(data);
       } catch (err) {
         return json({ error: err.message }, { status: 502 });
