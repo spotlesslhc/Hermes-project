@@ -1390,12 +1390,13 @@ export default {
     }
     if (pathname === "/api/debug/wave-schema" && method === "GET") {
       try {
-        const data = await waveGraphQL(env, `query($a: String!, $b: String!, $c: String!, $d: String!) {
-          __type1: __type(name: $a) { fields { name type { name kind ofType { name kind } } } }
-          __type2: __type(name: $b) { fields { name type { name kind ofType { name kind } } } }
-          __type3: __type(name: $c) { inputFields { name type { name kind ofType { name kind } } } }
-          __type4: __type(name: $d) { inputFields { name type { name kind ofType { name kind } } } }
-        }`, { a: "Business", b: "Product", c: "InvoiceCreateInput", d: "InvoiceItemCreateInput" });
+        const data = await waveGraphQL(env, `query($c: String!, $m: String!, $cc: String!, $pc: String!, $q: String!) {
+          itemsField: __type(name: $c) { inputFields { name type { kind name ofType { kind name ofType { kind name ofType { kind name } } } } } }
+          mutationType: __type(name: $m) { fields { name } }
+          customerConn: __type(name: $cc) { fields { name type { kind name ofType { kind name } } } }
+          productConn: __type(name: $pc) { fields { name type { kind name ofType { kind name } } } }
+          queryType: __type(name: $q) { fields { name args { name type { kind name ofType { kind name } } } } }
+        }`, { c: "InvoiceCreateInput", m: "Mutation", cc: "CustomerConnection", pc: "ProductConnection", q: "Business" });
         return json(data);
       } catch (err) {
         return json({ error: err.message }, { status: 502 });
