@@ -249,14 +249,19 @@ async function controlSpotify(env, { action, query }) {
 // already-authenticated connection instead).
 //
 // Google's policy for an unverified OAuth app requesting a sensitive
-// scope (calendar.events is sensitive) caps refresh tokens at 7 days.
+// scope (the calendar scope is sensitive) caps refresh tokens at 7 days.
 // Full verification removes that cap but needs a public privacy policy
 // and a review; not done yet. Until then, Bryce needs to re-visit the
 // "Connect Google Calendar" dashboard tile roughly weekly, or this stops
 // working silently. Flagged in the vault as a real follow-up.
 
 const GOOGLE_CALENDAR_REDIRECT_URI = "https://hermes-project.spotlesscleaninglhc.workers.dev/api/google-calendar/callback";
-const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+// calendar.events alone can't list the account's calendars (needed to find
+// the "Cleans" calendar by name) -- confirmed via a real 403
+// insufficientPermissions/ACCESS_TOKEN_SCOPE_INSUFFICIENT error on
+// calendarList.list. The plain "calendar" scope covers both listing
+// calendars and reading/writing events.
+const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
 const TURNO_PROPERTY_ADDRESS = "2211 Sahara Drive";
 const TURNO_CLEANER_CASCADE = ["amy", "ashley"];
 const TURNO_MAX_POSTPONE_DAYS = 2;
