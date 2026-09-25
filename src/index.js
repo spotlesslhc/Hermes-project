@@ -1856,15 +1856,24 @@ export default {
     }
     if (pathname === "/api/debug/wave-tx-schema" && method === "GET") {
       try {
-        const typeQuery = `query($t: String!) {
-          __type(name: $t) { name inputFields { name type { name kind ofType { name kind ofType { name kind } } } } }
+        const enumQuery = `query($t: String!) {
+          __type(name: $t) { name enumValues { name } }
         }`;
-        const [createInput, anchorInput, lineItemInput] = await Promise.all([
-          waveGraphQL(env, typeQuery, { t: "MoneyTransactionCreateInput" }),
-          waveGraphQL(env, typeQuery, { t: "MoneyTransactionCreateAnchorInput" }),
-          waveGraphQL(env, typeQuery, { t: "MoneyTransactionCreateLineItemInput" })
+        const mutationQuery = `query {
+          __type(name: "Mutation") {
+            fields(includeDeprecated: true) {
+              name
+              args { name type { name kind ofType { name kind } } }
+            }
+          }
+        }`;
+        const [direction, balance, mutations] = await Promise.all([
+          waveGraphQL(env, enumQuery, { t: "TransactionDirection" }),
+          waveGraphQL(env, enumQuery, { t: "BalanceType" }),
+          waveGraphQL(env, mutationQuery)
         ]);
-        return json({ createInput, anchorInput, lineItemInput });
+        const moneyTxFields = mutations.__type.fields.filter((f) => /moneyTransaction/i.test(f.name));
+        return json({ direction, balance, moneyTxFields });
       } catch (err) {
         return json({ error: err.message }, { status: 502 });
       }
