@@ -779,7 +779,10 @@ async function getCleanerPaidThrough(env, cleanerKey) {
 // cleaner accepted, from the day after paidThrough up through yesterday --
 // today's jobs aren't "completed" yet, so they're deliberately excluded.
 async function listCompletedJobsForCleaner(env, calendarId, cleanerEmail, paidThrough) {
-  const timeMin = `${paidThrough}T00:00:01-07:00`;
+  // paidThrough is inclusive -- a job ON that date was already covered by
+  // the payment that set it, so counting starts the day after.
+  const rangeStart = toDateOnly(addDays(new Date(`${paidThrough}T00:00:00Z`), 1));
+  const timeMin = `${rangeStart}T00:00:01-07:00`;
   const timeMax = `${toDateOnly(addDays(new Date(), -1))}T23:59:59-07:00`;
   if (timeMin >= `${timeMax}`) return [];
   const params = new URLSearchParams({ timeMin, timeMax, singleEvents: "true", orderBy: "startTime", maxResults: "250" });
