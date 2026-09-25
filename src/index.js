@@ -537,7 +537,9 @@ async function findWaveProductByName(env, name) {
 
 // Leaves unitPrice unset on the item so Wave applies the item's own
 // already-configured rate, rather than this code guessing or hardcoding one.
-async function createWaveInvoiceForProperty(env, { customerName, productName }) {
+// Dated on the cleaning date (Bryce's rule) and left as a DRAFT, matching the
+// Zapier-created invoices, so a cancellation can still delete it cleanly.
+async function createWaveInvoiceForProperty(env, { customerName, productName, invoiceDate }) {
   const businessId = await getWaveBusinessId(env);
   const customerId = await findWaveCustomerByName(env, customerName);
   const product = await findWaveProductByName(env, productName);
@@ -547,12 +549,29 @@ async function createWaveInvoiceForProperty(env, { customerName, productName }) 
     input: {
       businessId,
       customerId,
+      status: "DRAFT",
+      invoiceDate,
       items: [{ productId: product.id, quantity: 1 }]
     }
   });
   const result = data.invoiceCreate;
   if (!result.didSucceed) throw new Error(`Wave invoice creation failed: ${JSON.stringify(result.inputErrors)}`);
   return result.invoice.id;
+}
+
+async function getWaveInvoiceStatus(env, invoiceId) {
+  const businessId = await getWaveBusinessId(env);
+  const data = await waveGraphQL(env, `query($businessId: ID!, $invoiceId: ID!) {
+    business(id: $businessId) { invoice(id: $invoiceId) { id status } }
+  }`, { businessId, invoiceId });
+  return data.business && data.business.invoice ? data.business.invoice.status : null;
+}
+
+async function deleteWaveInvoice(env, invoiceId) {
+  const data = await waveGraphQL(env, `mutation($input: InvoiceDeleteInput!) {
+    invoiceDelete(input: $input) { didSucceed inputErrors { message } }
+  }`, { input: { invoiceId } });
+  if (!data.invoiceDelete.didSucceed) throw new Error(`Wave invoice delete failed: ${JSON.stringify(data.invoiceDelete.inputErrors)}`);
 }
 
 const TURNO_WAVE_CUSTOMER_NAME = "Sparks";
@@ -575,13 +594,18 @@ async function assignTurnoCleaning(env, { checkoutDate, reservationCode }) {
         const note = postponeCount > 0 ? ` (postponed ${postponeCount} day${postponeCount > 1 ? "s" : ""} from the checkout date — both other cleaners were already booked)` : "";
         await appendLog(env, { who: "Scheduler", what: `Invited ${name} to clean ${TURNO_PROPERTY_ADDRESS} on ${dateOnly}${note}` });
 
+        await env.HERMES_KV.put(`turno_date:${dateOnly}`, reservationCode);
+        await env.HERMES_KV.put(`turno_clean_date:${reservationCode}`, dateOnly);
+
         let invoiceId = null;
         try {
           invoiceId = await createWaveInvoiceForProperty(env, {
             customerName: TURNO_WAVE_CUSTOMER_NAME,
-            productName: TURNO_PROPERTY_ADDRESS
+            productName: TURNO_PROPERTY_ADDRESS,
+            invoiceDate: dateOnly
           });
-          await appendLog(env, { who: "Bookkeeper", what: `Created Wave invoice for ${TURNO_PROPERTY_ADDRESS} (reservation ${reservationCode})` });
+          await env.HERMES_KV.put(`turno_invoice:${reservationCode}`, invoiceId);
+          await appendLog(env, { who: "Bookkeeper", what: `Created draft Wave invoice for ${TURNO_PROPERTY_ADDRESS} dated ${dateOnly} (reservation ${reservationCode})` });
         } catch (err) {
           await appendLog(env, { who: "Bookkeeper", what: `Couldn't create the Wave invoice for ${TURNO_PROPERTY_ADDRESS} (reservation ${reservationCode}): ${err.message}. Cleaner is still invited — this just needs a manual invoice.` });
         }
@@ -600,11 +624,87 @@ async function assignTurnoCleaning(env, { checkoutDate, reservationCode }) {
   throw new Error("Both cleaners are already booked and there's no safe day to postpone to (an upcoming check-in blocks it). Needs manual assignment.");
 }
 
+function isGoneError(err) {
+  return /API error: (404|410)\b/.test(err.message);
+}
+
+// Undoes a Turno clean: deletes its calendar event (notifying any invited
+// cleaner) and its Wave invoice, but only while the invoice is still a DRAFT
+// — anything already sent or paid is left for Bryce to handle.
+async function cancelTurnoClean(env, { reservationCode, date }) {
+  const code = reservationCode || (date ? await env.HERMES_KV.get(`turno_date:${date}`) : null);
+  const calendarId = await getCleansCalendarId(env);
+  const done = [];
+  const leftForBryce = [];
+
+  let eventId = code ? await env.HERMES_KV.get(`turno_event:${code}`) : null;
+  if (!eventId && date) {
+    const events = await listPropertyEvents(env, calendarId, `${date}T00:00:00-07:00`, `${date}T23:59:59-07:00`);
+    if (events.length === 1) eventId = events[0].id;
+    else if (events.length > 1) leftForBryce.push(`there are ${events.length} Sahara cleans on ${date}, so none were removed`);
+  }
+  if (eventId) {
+    try {
+      await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events/${eventId}?sendUpdates=all`, { method: "DELETE" });
+      done.push("removed the calendar event");
+    } catch (err) {
+      if (!isGoneError(err)) throw err;
+      done.push("the calendar event was already gone");
+    }
+  } else if (!leftForBryce.length) {
+    leftForBryce.push("no matching calendar event was found");
+  }
+
+  const invoiceId = code ? await env.HERMES_KV.get(`turno_invoice:${code}`) : null;
+  if (invoiceId) {
+    const status = await getWaveInvoiceStatus(env, invoiceId);
+    if (status === "DRAFT") {
+      await deleteWaveInvoice(env, invoiceId);
+      done.push("deleted the draft Wave invoice");
+    } else if (status) {
+      leftForBryce.push(`the Wave invoice is already ${status}, so it was left alone`);
+    } else {
+      done.push("the Wave invoice was already gone");
+    }
+  } else {
+    leftForBryce.push("no invoice is on record for it, so check Wave by hand");
+  }
+
+  const cleanDate = date || (code ? await env.HERMES_KV.get(`turno_clean_date:${code}`) : null);
+  if (code) {
+    await env.HERMES_KV.delete(`turno_event:${code}`);
+    await env.HERMES_KV.delete(`turno_invoice:${code}`);
+    await env.HERMES_KV.delete(`turno_clean_date:${code}`);
+  }
+  if (cleanDate) await env.HERMES_KV.delete(`turno_date:${cleanDate}`);
+
+  const label = code ? `reservation ${code}` : date;
+  const summary = `Cancelled ${TURNO_PROPERTY_ADDRESS} clean (${label}): ${done.join("; ") || "nothing to remove"}` +
+    (leftForBryce.length ? `. Needs Bryce: ${leftForBryce.join("; ")}.` : ".");
+  await appendLog(env, { who: "Scheduler", what: summary });
+  return summary;
+}
+
 async function handleTurnoReservationWebhook(request, env) {
   let body;
   try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, { status: 400 }); }
   const emailText = [body.subject, body.body_plain, body.body].filter(Boolean).join("\n");
   if (!emailText) return json({ error: "Expected subject and/or body_plain in the webhook payload" }, { status: 400 });
+
+  // No cancellation email has been seen yet; this assumes Hospitable would
+  // put "cancel" in the subject and still include the reservation code.
+  if (/cancel/i.test(body.subject || "")) {
+    const codeMatch = emailText.match(/Reservation code:\s*(\S+)/i) || emailText.match(/\b(HM[A-Z0-9]{8})\b/);
+    if (!codeMatch) {
+      await appendLog(env, { who: "Scheduler", what: `Got a ${TURNO_PROPERTY_ADDRESS} cancellation email but couldn't find a reservation code in it. Needs manual cleanup.` });
+      return json({ error: "Cancellation email had no reservation code" }, { status: 422 });
+    }
+    try {
+      return json({ ok: true, cancelled: await cancelTurnoClean(env, { reservationCode: codeMatch[1] }) });
+    } catch (err) {
+      return json({ error: err.message }, { status: 500 });
+    }
+  }
 
   try {
     const parsed = parseTurnoReservationEmail(emailText);
@@ -664,15 +764,13 @@ async function json(data, init = {}) {
 
 // ---- Approval queue: actions that require Bryce's explicit review --------
 //
-// Nothing today is risky enough to need this (propose_site_edit already has
-// its own GitHub-PR review gate, record_monthly_finance is Bryce reporting
-// his own numbers) — this exists so a future tool that touches money, sends
-// something externally, or changes real-world state can be gated by adding
-// its name to APPROVAL_REQUIRED_TOOLS below, instead of inventing a new
-// safety mechanism each time. Approval only ever happens via the dashboard's
+// A tool that touches money, sends something externally, or changes
+// real-world state is gated by adding its name to APPROVAL_REQUIRED_TOOLS
+// below, instead of inventing a new safety mechanism each time
+// (propose_site_edit already has its own GitHub-PR review gate). Approval only ever happens via the dashboard's
 // Approve/Deny buttons, never by chat/voice reply.
 
-const APPROVAL_REQUIRED_TOOLS = new Set([]);
+const APPROVAL_REQUIRED_TOOLS = new Set(["cancel_turno_clean"]);
 
 // KV's list() operation has its own, much smaller daily quota (1,000/day on
 // the free plan) than get()/put() (100,000/day) — and the dashboard polls
@@ -1147,6 +1245,10 @@ async function dispatchTool(env, name, input) {
     const result = await assignCleaner(env, input);
     return `Invited ${input.cleaner_name} (${result.cleanerEmail}) to the ${result.property} turnover, checkout ${result.checkout || "TBD"}. Tell Bryce it's sent, not confirmed — the cleaner still has to accept the invite.`;
   }
+  if (name === "cancel_turno_clean") {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date || "")) throw new Error("date must be YYYY-MM-DD");
+    return await cancelTurnoClean(env, { date: input.date });
+  }
   if (name === "list_vault_notes") {
     const files = await listVaultNotes(env);
     return files.length ? files.join("\n") : "No notes found in Knowledge/.";
@@ -1292,6 +1394,17 @@ async function handleAsk(request, env) {
         cleaner_name: { type: "string", description: "The cleaner's first name as Bryce would say it, e.g. \"Amy\" or \"Ashley\". Must match a name in the current roster." }
       },
       required: ["property", "cleaner_name"]
+    }
+  });
+  tools.push({
+    name: "cancel_turno_clean",
+    description: "Undo a cancelled 2211 Sahara Drive (Turno) clean: removes its Cleans calendar event (notifying any invited cleaner) and deletes its Wave invoice if that's still a draft. Use when Bryce says a Sahara reservation or clean was cancelled. Requires Bryce's approval on the dashboard before it runs.",
+    input_schema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "The date of the cancelled clean, as YYYY-MM-DD." }
+      },
+      required: ["date"]
     }
   });
   if (env.SPOTIFY_CLIENT_ID) {
