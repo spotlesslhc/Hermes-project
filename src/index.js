@@ -783,7 +783,8 @@ async function listCompletedJobsForCleaner(env, calendarId, cleanerEmail, paidTh
   // the payment that set it, so counting starts the day after.
   const rangeStart = toDateOnly(addDays(new Date(`${paidThrough}T00:00:00Z`), 1));
   const timeMin = `${rangeStart}T00:00:01-07:00`;
-  const timeMax = `${toDateOnly(addDays(new Date(), -1))}T23:59:59-07:00`;
+  const lastCompletedDate = toDateOnly(addDays(new Date(), -1));
+  const timeMax = `${lastCompletedDate}T23:59:59-07:00`;
   if (timeMin >= `${timeMax}`) return [];
   const params = new URLSearchParams({ timeMin, timeMax, singleEvents: "true", orderBy: "startTime", maxResults: "250" });
   const data = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events?${params}`);
@@ -791,11 +792,20 @@ async function listCompletedJobsForCleaner(env, calendarId, cleanerEmail, paidTh
     .filter((e) => e.status !== "cancelled")
     .filter((e) => (e.attendees || []).some((a) => a.email === cleanerEmail && a.responseStatus === "accepted"))
     .map((e) => ({
-      date: (e.start?.dateTime || e.start?.date || "").slice(0, 10),
+      // The clean happens on checkout, not check-in -- most events are
+      // same-day so this is usually identical to the start date, but for
+      // a multi-day event (a guest's whole stay entered as one event) the
+      // end date is the actual day the cleaner was there.
+      date: (e.end?.dateTime || e.end?.date || "").slice(0, 10),
       property: e.summary,
       pay: parsePayFromDescription(e.description)
     }))
-    .filter((job) => job.pay !== null);
+    .filter((job) => job.pay !== null)
+    // Google's timeMax only bounds an event's START, not its end -- a
+    // multi-day event that's still in progress (checkout today or later)
+    // can slip through with a future date. Its checkout hasn't happened
+    // yet, so it isn't actually completed regardless.
+    .filter((job) => job.date <= lastCompletedDate);
 }
 
 async function getCleanerPayrollSummary(env, cleanerKey) {
