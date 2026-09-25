@@ -141,3 +141,28 @@ a 10-second ask each time real sample data is needed.
   field. When matching an external record to a calendar event, match on
   something format-independent like the street number, not the full
   address string.
+- For reading or creating Cleans events, the Google Calendar connector
+  (on `spotlesscleaninglhc@gmail.com`) is far more reliable than the
+  browser. Full event format rules are in [[scheduler]].
+
+## Hospitable, Turno, Gmail accounts, GitHub forms (2026-09-25)
+
+- "Claude co-work" is what Bryce calls Claude in Chrome (his real,
+  signed-in Chrome).
+- **Hospitable**: Bryce's login only has Home and Calendar (no
+  reservations list). On the Calendar grid, clicking a reservation bar
+  opens a side panel with dates. Clicking another bar while it's open
+  often just closes it, so press Escape before each click. Horizontal
+  scroll moves about 2 days per wheel tick and the view shows about 15
+  days — step 7 ticks at a time or you'll skip dates. "Blocked" bars
+  don't open a panel.
+- **Turno** (`app.turno.com/cleaner/projects/view`): the date arrows page
+  by month, and `get_page_text` lists every project for the month.
+  Projects show only the clean date and time, not guest check-in.
+- **Gmail**: `/mail/u/0` is the business account, `/mail/u/1` is
+  Bryce's personal `bryce55777@gmail.com`, where the Sahara Hospitable
+  emails arrive.
+- **GitHub**: `form_input` works for filling the new-PR title and body,
+  but the PR comment box ignored it (the comment never posted). The
+  "Create pull request" button often needs a second, coordinate-based
+  click after the first click just scrolls the page.

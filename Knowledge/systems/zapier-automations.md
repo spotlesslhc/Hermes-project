@@ -44,7 +44,7 @@ the name is just stale. Flow:
 
 Reasonably complete — real fallback and cancellation-handling logic.
 
-### 2. "Hospitable Reservations to Wave Invoices" (now v3, active)
+### 2. "Hospitable Reservations to Wave Invoices" (now v5, active)
 
 Triggered by a Catch Hook, fed by Zap #1's POST step. This one is much
 bigger than it first looked — **7 paths total (A, B, C, D, E, F, G)**,
@@ -61,7 +61,12 @@ distinction matters):
   backwards logic (an earlier pass here wrongly called Path C's logic
   "backwards"; retracted). All three have a live "field not available in
   current sample" warning on their Action condition — a real, shared
-  field-mapping staleness issue (see below).
+  field-mapping staleness issue (see below). Since **v4** the Find
+  Customer steps no longer create a customer on a miss (Bryce's rule:
+  always find existing Wave records, never create). Each Create Invoice
+  step's **Invoice Date is mapped to `1. Check Out`**, i.e. the cleaning
+  date — Bryce's rule that invoice date = cleaning date is already met
+  here (confirmed in v5, 2026-09-25).
 - **Path D**: required the property field to equal all three properties
   above simultaneously (AND, not OR) — logically impossible, dead code.
   **Bryce confirmed he didn't know what it was for and asked it be
@@ -76,20 +81,31 @@ distinction matters):
   rather than read from the parsed `user` field — Bryce confirmed every
   reservation from this Hospitable webhook is actually under that name,
   so this isn't currently a bug, just non-obvious/fragile if that ever
-  changes.
+  changes. **It never worked until v5** (2026-09-25): wrong endpoint,
+  wrong query shape, and wrong mutation fields meant every run failed
+  before touching Wave. Fixed and verified end to end on a real throwaway
+  draft invoice (#469, confirmed gone in Wave's own UI). The live code
+  lives in the Zap itself; the full debugging trail is in git history for
+  `Knowledge/unfinished-projects/zapier-overseer-buildout.md`.
 - **Path G**: fires on `Action` exactly matching "reservation.changed" →
   a second Code-by-Zapier Python step, using a hardcoded Wave
   `customer_id` (not a name lookup) — presumably updates rather than
   deletes. Not fully read line-by-line; worth a closer pass if this
   becomes load-bearing.
 
-**Open question, not yet resolved**: Bryce said "invoice deletion needs
-rebuilding," which was said believing (based on this doc's first,
-incorrect pass) that no such logic existed. Now that Path E is confirmed
-to exist and look plausible, it's unclear whether it's actually broken in
-practice (worth asking Bryce directly what he's observed) or whether he
-just wasn't aware it existed. Don't assume either way — ask before
-"rebuilding" something that might already work.
+**Wave GraphQL gotchas learned fixing Path E** (apply to Path G and any
+new Wave code — `src/index.js`'s working queries are the reliable
+reference):
+- Endpoint is `https://gql.waveapps.com/graphql/public`.
+- The account has **two businesses** ("Personal" and "Spotless
+  Cleaning") — always select by name, never `edges[0]`.
+- Invoices live under `business(id:) { invoices(...) }`, not top-level.
+  `invoices` takes **no `filter` argument** and paginates with
+  `page`/`pageSize`, not `first` — match customer/date/status client-side.
+- `invoiceDelete(input: { invoiceId })` returns `didSucceed` and
+  `inputErrors`, like `invoiceCreate`.
+- `raise_for_status()` hides Wave's error body — include
+  `e.response.text` in the error so GraphQL errors are actually visible.
 
 **Run history**: 40 runs in the last 30 days (as of the first pass),
 zero errored / handled-error / needs-review / filtered. All "successful."
