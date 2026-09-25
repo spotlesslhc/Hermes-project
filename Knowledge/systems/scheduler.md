@@ -21,6 +21,22 @@ code, supply location, pay amount. Calendar event **color** (Peacock vs
 Basil) is **not** about which cleaner is assigned — Bryce clarified it
 marks same-day-checkin cleans (Basil) vs. not (Peacock).
 
+**Standard event format** (confirmed with Bryce 2026-09-25, when backfilling
+cleans the webhooks missed): a timed **single-day** event, 10:00–16:00
+America/Phoenix, on the checkout date — never multi-day (the few multi-day
+events on the calendar are Bryce's own one-off edits, not a pattern to
+copy). Title, location and description are copied from that property's
+previous cleans. The color rule is driven by the description text: if it
+says "Same day checkin", use Basil (`colorId` 10); otherwise Peacock
+(`colorId` 7). Columbine's events are marked Free rather than Busy. No
+cleaners are invited when an event is created — that's a separate step.
+
+The Turno automation's `findOrCreateTurnoEvent` (`src/index.js`) does
+**not** follow this format yet: it creates an all-day event titled
+"Clean: 2211 Sahara Drive (check-in by …)" with a generic description, no
+location and no color. Fix that before trusting its events to look like
+Bryce's.
+
 This system automates exactly that motion rather than inventing a
 separate assignment mechanism.
 
