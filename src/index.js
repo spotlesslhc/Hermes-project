@@ -1856,24 +1856,15 @@ export default {
     }
     if (pathname === "/api/debug/wave-tx-schema" && method === "GET") {
       try {
-        const businessId = await getWaveBusinessId(env);
-        const inputTypePromise = waveGraphQL(env, `query($t: String!) {
+        const typeQuery = `query($t: String!) {
           __type(name: $t) { name inputFields { name type { name kind ofType { name kind ofType { name kind } } } } }
-        }`, { t: "MoneyTransactionCreateInput" });
-        const relevant = [];
-        for (let page = 1; page <= 15 && relevant.length < 5; page++) {
-          const data = await waveGraphQL(env, `query($businessId: ID!, $page: Int!) {
-            business(id: $businessId) {
-              accounts(page: $page, pageSize: 200) {
-                edges { node { id name type { name value } subtype { name value } } }
-              }
-            }
-          }`, { businessId, page });
-          const nodes = data.business.accounts.edges.map((e) => e.node);
-          if (!nodes.length) break;
-          relevant.push(...nodes.filter((a) => /cash|payroll|salary|wage/i.test(a.name)));
-        }
-        return json({ accounts: relevant, inputType: await inputTypePromise });
+        }`;
+        const [createInput, anchorInput, lineItemInput] = await Promise.all([
+          waveGraphQL(env, typeQuery, { t: "MoneyTransactionCreateInput" }),
+          waveGraphQL(env, typeQuery, { t: "MoneyTransactionCreateAnchorInput" }),
+          waveGraphQL(env, typeQuery, { t: "MoneyTransactionCreateLineItemInput" })
+        ]);
+        return json({ createInput, anchorInput, lineItemInput });
       } catch (err) {
         return json({ error: err.message }, { status: 502 });
       }
