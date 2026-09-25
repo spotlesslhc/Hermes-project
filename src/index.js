@@ -1857,22 +1857,23 @@ export default {
     if (pathname === "/api/debug/wave-tx-schema" && method === "GET") {
       try {
         const businessId = await getWaveBusinessId(env);
-        const [accounts, inputType] = await Promise.all([
-          waveGraphQL(env, `query($businessId: ID!) {
+        const inputTypePromise = waveGraphQL(env, `query($t: String!) {
+          __type(name: $t) { name inputFields { name type { name kind ofType { name kind ofType { name kind } } } } }
+        }`, { t: "MoneyTransactionCreateInput" });
+        const relevant = [];
+        for (let page = 1; page <= 15 && relevant.length < 5; page++) {
+          const data = await waveGraphQL(env, `query($businessId: ID!, $page: Int!) {
             business(id: $businessId) {
-              accounts(page: 1, pageSize: 200) {
+              accounts(page: $page, pageSize: 200) {
                 edges { node { id name type { name value } subtype { name value } } }
               }
             }
-          }`, { businessId }),
-          waveGraphQL(env, `query($t: String!) {
-            __type(name: $t) { name inputFields { name type { name kind ofType { name kind ofType { name kind } } } } }
-          }`, { t: "MoneyTransactionCreateInput" })
-        ]);
-        const relevant = accounts.business.accounts.edges
-          .map((e) => e.node)
-          .filter((a) => /cash|payroll|salary|wage/i.test(a.name) || a.type?.value === "EXPENSE");
-        return json({ accounts: relevant, inputType });
+          }`, { businessId, page });
+          const nodes = data.business.accounts.edges.map((e) => e.node);
+          if (!nodes.length) break;
+          relevant.push(...nodes.filter((a) => /cash|payroll|salary|wage/i.test(a.name)));
+        }
+        return json({ accounts: relevant, inputType: await inputTypePromise });
       } catch (err) {
         return json({ error: err.message }, { status: 502 });
       }
