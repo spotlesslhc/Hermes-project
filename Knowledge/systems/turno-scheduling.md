@@ -59,7 +59,19 @@ just fire a one-way webhook.
   either if no match is found — throws instead, so a lookup miss can't
   silently fragment Bryce's real records. Doesn't block the cleaner
   invite if invoicing fails; logs it separately as needing a manual
-  invoice.
+  invoice. Created as a **DRAFT dated on the cleaning date** (Bryce's rule,
+  2026-09-25 — the invoice date must equal the cleaning date, for every
+  property).
+- `cancelTurnoClean` — deletes the clean's calendar event (invited cleaner
+  gets Google's cancellation notice) and its Wave invoice **only if still
+  DRAFT**; anything sent or paid is left and logged for Bryce. Two entry
+  points: a forwarded email whose subject contains "cancel" (assumed
+  format — Hospitable has never sent Bryce a cancellation email for this
+  property, so this is untested against a real one), and Deja's
+  `cancel_turno_clean` tool (by date), which is the first tool in
+  `APPROVAL_REQUIRED_TOOLS` — it waits for Bryce's dashboard approval.
+  KV keys per reservation: `turno_event:`, `turno_invoice:`,
+  `turno_clean_date:` (by code) and `turno_date:` (by date).
 - Google Calendar OAuth (`handleGoogleCalendarLogin/Callback`,
   `getGoogleCalendarAccessToken`) — one-time-authorize, refresh-token-in-
   KV pattern, same as [[spotify-control]]. "Connect Calendar (Turno)"
@@ -95,11 +107,11 @@ done.
   trigger (Google Calendar has no dedicated "attendee declined" trigger)
   filtered to declined-status changes on the Cleans calendar, calling a
   new Worker webhook.
-- **Cancellation handling**: no invoice-deletion or calendar-event-
-  deletion logic for this property yet — no observed cancellation-email
-  format to parse. Don't copy Path E's invoice-deletion logic from the
-  Hospitable invoicing Zap as-is if this gets built later; see
-  [[zapier-automations]] for its current state.
+- **Cancellation from a real cancellation email**: built (see
+  `cancelTurnoClean` above) but unverified — no real cancellation email
+  has ever arrived to confirm the subject/format assumption. Reservations
+  created before 2026-09-25 have no invoice ID on record, so cancelling
+  one only removes the calendar event; its invoice needs deleting by hand.
 
 ## Related fixes made while building this
 
