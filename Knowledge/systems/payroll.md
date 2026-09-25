@@ -9,10 +9,10 @@ updated: 2026-09-26
 Amy and Ashley are 1099 contractors, not W-2 employees, so this is not
 payroll in the withholding/tax sense — there's no tax to withhold. What
 this system does is track what each cleaner is owed for completed jobs
-and let Bryce record a payment he already made. **It never moves money.**
-Bryce still pays them himself via Venmo, Zelle (through Foothills Bank),
-or Cash App — the apps-tile links on the dashboard for those are just
-external bookmarks, not integrations.
+and get that payment ready to send. Bryce still clicks Send himself, in
+Venmo or Zelle (through Foothills Bank) — **this never sends money on its
+own**, and never will; see "Sending the payment" below for why that's a
+hard line, not a caution that eases with more supervision.
 
 ## Phase 1 (built 2026-09-26): track and record
 
@@ -48,21 +48,58 @@ external bookmarks, not integrations.
   lazy-index pattern as the approval queue's `PENDING_INDEX_KEY` — see
   that comment in `src/index.js` for why a plain `list()` isn't used).
 
-## Phase 2 (not started): Deja sends the payment herself
+## Payment notes never include the full address
 
-Deferred until Phase 1 proves reliable, and it's a genuinely bigger lift
-than a code change: **Venmo, Zelle, and Cash App have no public API for a
-business to push money to an individual programmatically.** Zelle is a
-bank-network feature (Foothills Bank's own online banking), not a
-standalone service with a developer API. Before this can be built,
-someone needs to research a real path — options worth checking:
-- Wave's own bill-pay / vendor-payment features, if any exist beyond
-  invoicing (Wave's public GraphQL API was already found to have no
-  reporting capability — see [[wave-integration]] — so check what it
-  *can* do for outgoing payments specifically, not assume).
-- A bank ACH API (Foothills Bank or a fintech layered on top of it).
-- Whether Zapier has anything usable here (it doesn't have a native
-  Venmo/Zelle action for sending money, as far as investigated).
+Bryce's rule (2026-09-26): some of his Venmo transactions are public, so a
+payment note must never include a full address — street name and the
+cleaning date(s) only, never the house number. `streetNameOnly` strips a
+leading house number off the calendar event title
+("2211 Sahara Drive" -> "Sahara Drive"; "Unit 324" is already safe and is
+left as-is). `formatPayrollNote` builds one "Street Date" entry per
+completed job, comma-joined, covering every house paid in that batch —
+e.g. `"Sahara Drive 9/27, Columbine Drive 9/29"`. Both
+`getCleanerPayrollSummary` (as `paymentNote`) and the dashboard's Cleaner
+Payroll section (with a one-click Copy button) expose this, so it's ready
+to paste into Venmo/Zelle's note field without Bryce composing it by hand.
 
-Don't build toward this without confirming a real, callable API exists —
-"automate it" isn't possible with Bryce's current payment methods as-is.
+## Phase 2 (built 2026-09-26): the weekly browser-assisted run
+
+Bryce's actual request: Deja nudges weekly, and next time he brings
+Claude Code online, it handles the browser side and he just confirms.
+
+- A Cloudflare Cron Trigger (`triggers.crons` in `wrangler.jsonc`, Mondays
+  8am `America/Phoenix`) runs `runWeeklyPayrollCheck`, which posts one
+  Activity log line summarizing what's owed to each cleaner. That's all
+  it does — no queue, no lock, no stored "pending run" state, because
+  `owed` is already always computed live; there's nothing that could
+  drift out of sync by not tracking it separately.
+- See "Check for a pending cleaner payroll run at the start of every
+  session" in `CLAUDE.md` for the actual session behavior: check
+  `GET /api/payroll`, and if anyone's `owed > 0`, open Venmo (search by
+  name — no handle is stored) or Zelle in Bryce's real Chrome, prefill
+  the amount and `paymentNote`, and stop there.
+
+### Sending the payment is never something Claude does
+
+This is a hard rule, not a caution: **Claude never clicks Send on an
+actual money transfer, in any session, no matter how many times it's
+been approved before.** Prefilling the recipient, amount, and note is as
+far as browser assistance goes — Bryce reviews and sends it himself every
+time. Zelle additionally needs him to log into Foothills Bank manually;
+there's no SSO shortcut for that step.
+
+Once Bryce confirms he actually sent it, the session records it via
+`record_cleaner_payment` (or he does it himself on the dashboard) — that's
+what moves `owed` back toward zero and closes the loop.
+
+## Possible future: a real payment API
+
+If Bryce ever moves off Venmo/Zelle/Cash App to something with an actual
+programmatic payment API (a processor, or his bank's own ACH API), the
+final "click Send" step could eventually be removed — but that's a
+distinct, bigger decision (new payment method, new approval gating in
+`APPROVAL_REQUIRED_TOOLS` since it would newly touch real money
+unattended) tracked separately in
+[[unfinished-projects/cleaner-payroll-automation]]. Not needed for the
+browser-assisted flow above, and not something to build toward without
+Bryce explicitly choosing that path first.

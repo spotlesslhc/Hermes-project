@@ -57,5 +57,11 @@
   ],
   "vars": {
     "HERMES_DEBUG_TOOLS": "false"
+  },
+  "triggers": {
+    // Every Monday at 8am America/Phoenix (UTC-7 year-round, no DST) --
+    // posts a payroll reminder to the Activity log. See runWeeklyPayrollCheck
+    // in src/index.js and Knowledge/systems/payroll.md.
+    "crons": ["0 15 * * 1"]
   }
 }

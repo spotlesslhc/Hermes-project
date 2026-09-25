@@ -749,6 +749,27 @@ function parsePayFromDescription(description) {
   return match ? parseFloat(match[1].replace(/,/g, "")) : null;
 }
 
+// Strips a leading house number off a calendar event title ("2211 Sahara
+// Drive" -> "Sahara Drive"). Bryce's rule: a Venmo payment note must never
+// include the full address, since some of his Venmo transactions are
+// public -- the street name alone doesn't identify which house on it.
+// Titles with no leading number (e.g. "Unit 324") are left as-is.
+function streetNameOnly(title) {
+  const match = (title || "").trim().match(/^\d+\s+(.*)/);
+  return match ? match[1].trim() : (title || "").trim();
+}
+
+// One line per house per date, e.g. "Sahara Drive 9/27, Columbine Drive 9/29"
+// -- what street, and when, for every house covered by this payment.
+function formatPayrollNote(jobs) {
+  return jobs
+    .map((job) => {
+      const [, m, d] = job.date.split("-");
+      return `${streetNameOnly(job.property)} ${parseInt(m, 10)}/${parseInt(d, 10)}`;
+    })
+    .join(", ");
+}
+
 async function getCleanerPaidThrough(env, cleanerKey) {
   const stored = await env.HERMES_KV.get(`payroll:paid_through:${cleanerKey}`);
   return stored || PAYROLL_TRACKING_START;
@@ -782,7 +803,7 @@ async function getCleanerPayrollSummary(env, cleanerKey) {
   const paidThrough = await getCleanerPaidThrough(env, cleanerKey);
   const jobs = await listCompletedJobsForCleaner(env, calendarId, email, paidThrough);
   const owed = jobs.reduce((sum, job) => sum + job.pay, 0);
-  return { cleaner: cleanerKey, email, paidThrough, owed, jobCount: jobs.length, jobs };
+  return { cleaner: cleanerKey, email, paidThrough, owed, jobCount: jobs.length, jobs, paymentNote: formatPayrollNote(jobs) };
 }
 
 async function getAllCleanerPayrollSummaries(env) {
@@ -821,6 +842,7 @@ async function recordCleanerPayment(env, { cleaner_name, amount, date }) {
     amount,
     date: paidOn,
     jobsCovered: before.jobCount,
+    note: before.paymentNote,
     recordedAt: new Date().toISOString()
   };
   await env.HERMES_KV.put(`payroll_payment:${record.id}`, JSON.stringify(record));
@@ -833,6 +855,23 @@ async function recordCleanerPayment(env, { cleaner_name, amount, date }) {
   await appendLog(env, { who: "Bookkeeper", what: `Recorded $${amount.toFixed(2)} paid to ${cleaner_name} through ${paidOn}${mismatch}` });
 
   return { ...record, previouslyOwed: before.owed, mismatch: mismatch !== "" };
+}
+
+// Runs weekly (see the "crons" trigger in wrangler.jsonc). Doesn't send or
+// prepare anything itself -- it just posts a nudge to the Activity log so
+// Bryce knows a payroll run is ready next time he brings Claude online.
+// Nothing to clear or track between runs: "owed" is always computed live
+// from the calendar, so it's automatically zero again once actually paid.
+async function runWeeklyPayrollCheck(env) {
+  const summaries = await getAllCleanerPayrollSummaries(env);
+  const owedLines = Object.values(summaries)
+    .filter((s) => s.owed > 0)
+    .map((s) => `${s.cleaner}: $${s.owed.toFixed(2)} (${s.jobCount} job${s.jobCount === 1 ? "" : "s"})`);
+
+  const what = owedLines.length
+    ? `Weekly payroll ready — ${owedLines.join("; ")}. Bring Claude online to send it (Bryce confirms each payment in his own browser).`
+    : "Weekly payroll check: nothing owed to any cleaner right now.";
+  await appendLog(env, { who: "Bookkeeper", what });
 }
 
 // ---- KV helpers ---------------------------------------------------------
@@ -1809,5 +1848,9 @@ export default {
       return env.ASSETS.fetch(request);
     }
     return new Response("Not found", { status: 404 });
+  },
+
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runWeeklyPayrollCheck(env));
   }
 };
