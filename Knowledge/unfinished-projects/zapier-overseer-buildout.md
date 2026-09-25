@@ -3,6 +3,7 @@ title: Zapier Overseer buildout
 tags: [zapier-overseer, zapier]
 started: 2026-09-22
 updated: 2026-09-25
+status: Path E fix live (v5); Path G / field mappings / access-design still open
 ---
 
 # Zapier Overseer buildout
@@ -175,19 +176,15 @@ confirmed by reading its live code directly:
 
 ## What's left
 
-1. **Apply the exact corrected code below to Path E's Code step**
-   (`Run Python`, in "Hospitable Reservations to Wave Invoices") — fully
-   drafted and verified against the live current code, just blocked on
-   the permission issue above. Either Bryce pastes it directly, or a
-   future session with different permissions (or explicit
-   sign-off/config change from Bryce for this class of edit) applies it.
-   Re-test with a throwaway DRAFT Wave invoice (same recipe as before —
-   customer Jacob Whitaker, item description containing one of the three
-   real property addresses) before trusting it against real
-   cancellations.
-2. **Apply the same two fixes to Path G's search step**, once its full
+1. ~~Apply the exact corrected code to Path E's Code step~~ — **done,
+   published as v5, verified live.** See the 2026-09-25 "later" section
+   below for the final shipped code (it differs from the draft further
+   down this file — two more real bugs surfaced only once live-tested).
+2. **Apply the equivalent fixes to Path G's search step** (same endpoint
+   bug, same query-shape bug, plus check whether it hits the same
+   `filter`/pagination/mutation-shape bugs Path E did), once its full
    Step 3 (invoice creation) has been read to confirm `business_id`'s
-   role and the fix doesn't need to touch that part too. Not tested.
+   role. Not fixed or tested.
 3. Fix the stale Hospitable field mappings on Paths A, B, and C.
 4. Design what "full view and edit" access for Hermes actually requires
    (Zapier's own API, an API key to store, real thought about
@@ -352,20 +349,209 @@ endpoint = 'https://gql.waveapps.com/graphql/public'
     invoices = business_node.get('invoices', {}).get('edges', []) if business_node else []
 ```
 
-## 2026-09-25, later: retrying in an approval-gated permission mode
+## 2026-09-25, later: retried in an approval-gated permission mode — DONE, published as v5
 
 Bryce's call on the permission block above: rather than him hand-pasting
 the fix himself, or a session trying to route around its own guardrail,
-have the session doing this work (coordinating cross-session as
-"bryce-94") switch out of full-auto mode into a mode that prompts Bryce
-for approval on each action, then retry the same paste with him watching
-and approving it live. Bryce switched that session's mode and the retry
-was in progress as of this note — check that session directly (or this
-file's next update) for the outcome rather than assuming either way.
+switch the session out of full-auto mode into one that prompts Bryce for
+approval on each action, then retry with him watching and approving each
+edit live (he typed/pasted every code change himself; Claude in Chrome
+navigated, verified, and read results back). This worked.
+
+**The fix that actually shipped is not the one drafted earlier in this
+file.** Two more real bugs surfaced only once live-tested against Wave's
+actual API, on top of the business-selection bug already caught:
+
+3. **`Business.invoices` doesn't take a `filter` argument.** Wave
+   returned `"Unknown argument \"filter\" on field \"Business.invoices\"."`
+   Removed the filter; the query now asks for each invoice's
+   `customer { name }` instead, and the customer-name match happens
+   client-side in the Python loop (same pattern the property/date/status
+   matching already used).
+4. **`Business.invoices` uses `page`/`pageSize` pagination, not Relay-style
+   `first`.** `invoices(first: 100)` failed with a generic
+   `"Invalid query."` parse error at the exact token. Switched to
+   `invoices(page: 1, pageSize: 100)`, matching the pagination style
+   `findWaveCustomerByName`/`findWaveProductByName` already use for
+   `customers`/`products` in `src/index.js` — same lesson as bug #1: this
+   codebase's own working queries were the reliable reference the whole
+   time, not assumptions carried over from the original broken code.
+5. **The `invoiceDelete` mutation's input/output shape was wrong.** Wave
+   returned three validation errors at once: input field must be
+   `invoiceId` (not `id`), and the output type `InvoiceDeleteOutput` has
+   no `deletedId` field. Fixed to match the `didSucceed` /
+   `inputErrors { message code path }` shape `invoiceCreate` already uses
+   in `src/index.js` — Wave's mutations are consistent about this, the
+   original code just never got far enough to hit it.
+
+Also added one debugging improvement while chasing bug #3/#4: the
+`except requests.exceptions.RequestException` handler now includes
+`e.response.text` in the error message. `response.raise_for_status()`
+raises before the code ever sees the response body, so without this,
+Wave's actual GraphQL error detail (which is what actually diagnosed
+bugs #3/#4) is invisible — the error just says "400 Client Error" with
+no explanation. Worth keeping permanently, not just for this session.
+
+**Tested end-to-end against a real throwaway DRAFT invoice** (#469,
+customer Jacob Whitaker, invoice date 2026-09-20, item description
+"1795 Palo Verde Boulevard South", created and deleted again live in
+Wave during this session): Code step's own Test tab returned
+`success: true`, `deleted_invoice_id`, `invoice_number: 469`, and the
+correct property/date — then independently confirmed in Wave's own UI
+that invoice #469 now 404s. Both the Code step's report and Wave's own
+state agree the deletion actually happened, not just that the mutation
+returned a plausible-looking response.
+
+Testing needed two temporary Input Data overrides (`status` → literal
+`'cancelled'`, `check_out` → literal `'2026-09-20T10:00:00-07:00'`,
+since the trigger's cached sample data was a non-cancelled event with a
+different date) — both were reverted back to their real `1. Status` /
+`1. Check Out` dynamic references before publishing, verified by
+re-reading the Configure tab afterward. `properties` didn't need
+overriding — its live sample value already matched the test invoice's
+property.
+
+**Published as v5.** Live in production now — real cancellations will
+use this path going forward.
+
+### Final code (published, v5, verified 2026-09-25)
+
+```python
+import requests
+import json
+from datetime import datetime
+
+# Get input data (already parsed from webhook)
+check_out = input_data.get('check_out', '')
+properties = input_data.get('properties', '')
+user = input_data.get('user', '')
+code = input_data.get('code', '')
+status = input_data.get('status', '')
+wave_api_token = input_data.get('wave_api_token', '')
+
+# For cancelled bookings, extract date for invoice matching
+# The webhook data is already parsed, so we can use it directly
+customer_name = 'Jacob Whitaker'
+checkout_date = check_out[:10] if check_out else ''  # Extract YYYY-MM-DD from ISO format
+property_name = properties.split(',')[0].strip() if properties else ''  # Get first part of property string
+
+if not wave_api_token:
+    return {'success': False, 'error': 'Wave API token not provided.'}
+
+if not checkout_date:
+    return {'success': False, 'error': 'No checkout date found in webhook'}
+
+if not property_name:
+    return {'success': False, 'error': 'No property name found in webhook'}
+
+if status.lower() != 'cancelled':
+    return {'success': False, 'error': f'Booking status is {status}, not cancelled. Skipping deletion.'}
+
+endpoint = 'https://gql.waveapps.com/graphql/public'
+headers = {
+    'Authorization': f'Bearer {wave_api_token}',
+    'Content-Type': 'application/json'
+}
+
+try:
+    # Step 1: Resolve the Spotless Cleaning business ID (this account has two businesses)
+    business_query = 'query { businesses { edges { node { id name } } } }'
+    biz_response = requests.post(endpoint, headers=headers, json={'query': business_query})
+    biz_response.raise_for_status()
+    biz_result = biz_response.json()
+
+    if 'errors' in biz_result:
+        return {'success': False, 'error': f'GraphQL error (business lookup): {biz_result["errors"][0]["message"]}'}
+
+    business_edges = biz_result.get('data', {}).get('businesses', {}).get('edges', [])
+    business_id = next((e['node']['id'] for e in business_edges if e['node'].get('name') == 'Spotless Cleaning'), None)
+
+    if not business_id:
+        return {'success': False, 'error': 'Spotless Cleaning business not found in Wave account'}
+
+    # Step 2: Query invoices for Jacob Whitaker within that business
+    query = '''query($businessId: ID!) { business(id: $businessId) { invoices(page: 1, pageSize: 100) { edges { node { id invoiceNumber status invoiceDate customer { name } items { description } } } } } }'''
+
+    response = requests.post(endpoint, headers=headers, json={'query': query, 'variables': {'businessId': business_id}})
+    response.raise_for_status()
+    result = response.json()
+
+    if 'errors' in result:
+        return {'success': False, 'error': f'GraphQL error: {result["errors"][0]["message"]}'}
+
+    # Step 3: Find matching DRAFT invoice by checkout_date + property_name
+    matching_id = None
+    matching_number = None
+
+    invoices = result.get('data', {}).get('business', {}).get('invoices', {}).get('edges', [])
+
+    for edge in invoices:
+        invoice = edge['node']
+
+        # Only look at this customer's invoices
+        if invoice.get('customer', {}).get('name', '') != customer_name:
+            continue
+
+        # Only look at DRAFT invoices
+        if invoice['status'] != 'DRAFT':
+            continue
+
+        # Check if invoice date matches checkout date
+        invoice_date = invoice.get('invoiceDate', '')
+        if invoice_date != checkout_date:
+            continue
+
+        # Check if property name is in item description
+        items_description = ' '.join([item.get('description', '') for item in invoice.get('items', [])])
+        if property_name.lower() in items_description.lower():
+            matching_id = invoice['id']
+            matching_number = invoice.get('invoiceNumber', '')
+            break
+
+    if not matching_id:
+        return {
+            'success': False,
+            'error': f'No matching DRAFT invoice found for {property_name} with date {checkout_date}'
+        }
+
+    # Step 3: Delete the invoice using invoiceDelete mutation
+    mutation = f'''mutation {{ invoiceDelete(input: {{invoiceId: "{matching_id}"}}) {{ didSucceed inputErrors {{ message code path }} }} }}'''
+
+    delete_response = requests.post(endpoint, headers=headers, json={'query': mutation})
+    delete_response.raise_for_status()
+    delete_result = delete_response.json()
+
+    if 'errors' in delete_result:
+        return {'success': False, 'error': f'Delete error: {delete_result["errors"][0]["message"]}'}
+
+    # Check mutation response
+    delete_data = delete_result.get('data', {}).get('invoiceDelete', {})
+    input_errors = delete_data.get('inputErrors', [])
+
+    if input_errors:
+        return {'success': False, 'error': f'Wave error: {input_errors[0]["message"]}'}
+
+    if delete_data.get('didSucceed'):
+        return {
+            'success': True,
+            'deleted_invoice_id': matching_id,
+            'invoice_number': matching_number,
+            'property': property_name,
+            'checkout_date': checkout_date,
+            'message': f'Invoice {matching_number} deleted successfully'
+        }
+    else:
+        return {'success': False, 'error': 'Deletion did not succeed'}
+
+except requests.exceptions.RequestException as e:
+    detail = e.response.text if e.response is not None else 'no response body'
+    return {'success': False, 'error': f'Request error: {str(e)} | Body: {detail}'}
+except Exception as e:
+    return {'success': False, 'error': f'Error: {str(e)}'}
+```
 
 ## Blocked on
 
-Getting the Path E fix actually applied. As of 2026-09-25 this is
-mid-retry in an approval-gated session, not stuck on the earlier
-permission block — see the note above. Once applied and re-tested, pick
-up items 2–4 above.
+Nothing on Path E — done and live as v5. Remaining open items are 2–4
+under "What's left" above (Path G fix, stale field mappings, and the
+full-access design question) — none blocking, pick up whenever.
