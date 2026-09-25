@@ -1854,6 +1854,26 @@ export default {
         return json({ connected: false, error: err.message }, { status: 502 });
       }
     }
+    if (pathname === "/api/debug/wave-tx-schema" && method === "GET") {
+      try {
+        const businessId = await getWaveBusinessId(env);
+        const [accounts, inputType] = await Promise.all([
+          waveGraphQL(env, `query($businessId: ID!) {
+            business(id: $businessId) {
+              accounts(page: 1, pageSize: 200) {
+                edges { node { id name type { name value } subtype { name value } } }
+              }
+            }
+          }`, { businessId }),
+          waveGraphQL(env, `query {
+            __type(name: "MoneyTransactionCreateInput") { name inputFields { name type { name kind ofType { name kind ofType { name kind } } } } }
+          }`)
+        ]);
+        return json({ accounts: accounts.business.accounts.edges.map((e) => e.node), inputType });
+      } catch (err) {
+        return json({ error: err.message }, { status: 502 });
+      }
+    }
     // Anything else falls back to the static files in /public (this
     // shouldn't normally be needed — Cloudflare usually serves matching
     // assets before the Worker even runs — but it's a safety net).
