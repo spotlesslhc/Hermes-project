@@ -352,9 +352,20 @@ endpoint = 'https://gql.waveapps.com/graphql/public'
     invoices = business_node.get('invoices', {}).get('edges', []) if business_node else []
 ```
 
+## 2026-09-25, later: retrying in an approval-gated permission mode
+
+Bryce's call on the permission block above: rather than him hand-pasting
+the fix himself, or a session trying to route around its own guardrail,
+have the session doing this work (coordinating cross-session as
+"bryce-94") switch out of full-auto mode into a mode that prompts Bryce
+for approval on each action, then retry the same paste with him watching
+and approving it live. Bryce switched that session's mode and the retry
+was in progress as of this note — check that session directly (or this
+file's next update) for the outcome rather than assuming either way.
+
 ## Blocked on
 
-Getting the Path E fix actually applied — blocked on the permission
-issue in [[2026-09-25-zapier-code-edit-permission-block]], not on
-knowing what to change. Once applied and re-tested, pick up items 2–4
-above.
+Getting the Path E fix actually applied. As of 2026-09-25 this is
+mid-retry in an approval-gated session, not stuck on the earlier
+permission block — see the note above. Once applied and re-tested, pick
+up items 2–4 above.

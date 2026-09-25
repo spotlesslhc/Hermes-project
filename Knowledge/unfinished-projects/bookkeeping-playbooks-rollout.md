@@ -2,7 +2,7 @@
 title: Bookkeeping playbooks rollout
 tags: [bookkeeper, playbooks]
 started: 2026-09-22
-updated: 2026-09-22
+updated: 2026-09-25
 ---
 
 # Bookkeeping playbooks rollout
@@ -22,23 +22,23 @@ through the approval queue.
 
 - Convention and format defined: `Knowledge/playbooks/README.md`.
 - Workflow codified in `CLAUDE.md`.
-- PR open: `add/bookkeeping-playbooks-convention` (not yet merged).
+- **Convention PR merged** (2026-09-25, `add/bookkeeping-playbooks-convention`
+  → PR #25, commit `f45b63e`) — live on main.
 
 ## What's left
 
-1. Bryce merges the convention PR.
-2. Pick the first pilot task (candidates raised: categorizing
+1. Pick the first pilot task (candidates raised: categorizing
    cleaning-supply expenses, or reconciling the Zapier-created invoices
    against actual payouts — Bryce hasn't picked yet).
-3. Set up browser access to Bryce's real Wave account — either the Claude
+2. Set up browser access to Bryce's real Wave account — either the Claude
    in Chrome extension (his own logged-in session) or logging into Wave
    inside a session's own browser pane. Not yet decided which.
-4. Run the pilot task with Bryce supervising, write it up as the first
+3. Run the pilot task with Bryce supervising, write it up as the first
    file in `Knowledge/playbooks/`.
-5. Decide whether any piece of it is mechanical/low-risk enough to become
+4. Decide whether any piece of it is mechanical/low-risk enough to become
    a real Hermes tool, and if so, wire it in via `APPROVAL_REQUIRED_TOOLS`.
 
 ## Blocked on
 
-Bryce: merge the convention PR, pick the pilot task, and decide how
-Claude should get browser access to Wave.
+Bryce: pick the pilot task, and decide how Claude should get browser
+access to Wave.
