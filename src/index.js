@@ -1876,7 +1876,7 @@ export default {
         const returnTypeQuery = `query($t: String!) { __type(name: $t) { name fields { name type { name kind ofType { name kind } } } } }`;
         const [createReturn, deleteInput, deleteReturn] = await Promise.all([
           waveGraphQL(env, returnTypeQuery, { t: "MoneyTransactionCreateOutput" }),
-          waveGraphQL(env, typeQuery, { t: "MoneyTransactionDeleteInput" }),
+          waveGraphQL(env, enumQuery.replace("enumValues { name }", "inputFields { name type { name kind ofType { name kind } } }"), { t: "MoneyTransactionDeleteInput" }),
           waveGraphQL(env, returnTypeQuery, { t: "MoneyTransactionDeleteOutput" })
         ]);
         return json({ direction, balance, moneyTxFields, createReturn, deleteInput, deleteReturn });
