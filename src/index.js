@@ -1873,7 +1873,13 @@ export default {
           waveGraphQL(env, mutationQuery, { t: "Mutation" })
         ]);
         const moneyTxFields = mutations.__type.fields.filter((f) => /moneyTransaction/i.test(f.name));
-        return json({ direction, balance, moneyTxFields });
+        const returnTypeQuery = `query($t: String!) { __type(name: $t) { name fields { name type { name kind ofType { name kind } } } } }`;
+        const [createReturn, deleteInput, deleteReturn] = await Promise.all([
+          waveGraphQL(env, returnTypeQuery, { t: "MoneyTransactionCreateOutput" }),
+          waveGraphQL(env, typeQuery, { t: "MoneyTransactionDeleteInput" }),
+          waveGraphQL(env, returnTypeQuery, { t: "MoneyTransactionDeleteOutput" })
+        ]);
+        return json({ direction, balance, moneyTxFields, createReturn, deleteInput, deleteReturn });
       } catch (err) {
         return json({ error: err.message }, { status: 502 });
       }
