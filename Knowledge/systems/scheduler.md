@@ -31,11 +31,12 @@ says "Same day checkin", use Basil (`colorId` 10); otherwise Peacock
 (`colorId` 7). Columbine's events are marked Free rather than Busy. No
 cleaners are invited when an event is created — that's a separate step.
 
-The Turno automation's `findOrCreateTurnoEvent` (`src/index.js`) does
-**not** follow this format yet: it creates an all-day event titled
-"Clean: 2211 Sahara Drive (check-in by …)" with a generic description, no
-location and no color. Fix that before trusting its events to look like
-Bryce's.
+The Turno automation's `findOrCreateTurnoEvent` (`src/index.js`) follows
+this format (fixed 2026-09-25): it copies the description from the latest
+existing Sahara clean rather than hardcoding it — the repo is public, and
+descriptions hold door and supply codes — reuses any Sahara clean already
+on that date, and always creates Peacock, since a new reservation email
+can't know whether the next guest checks in the same day.
 
 This system automates exactly that motion rather than inventing a
 separate assignment mechanism.

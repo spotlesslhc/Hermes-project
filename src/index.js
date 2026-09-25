@@ -263,6 +263,12 @@ const GOOGLE_CALENDAR_REDIRECT_URI = "https://hermes-project.spotlesscleaninglhc
 // calendars and reading/writing events.
 const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
 const TURNO_PROPERTY_ADDRESS = "2211 Sahara Drive";
+const TURNO_PROPERTY_LOCATION = "2211 Sahara Dr";
+const CLEANS_TIME_ZONE = "America/Phoenix";
+// Peacock = no same-day check-in. Bryce switches a clean to Basil (10) by hand
+// when its description says "Same day checkin"; a new reservation email can't
+// tell us that, since it depends on the next guest.
+const CLEANS_COLOR_NO_SAME_DAY_CHECKIN = "7";
 const TURNO_CLEANER_CASCADE = ["amy", "ashley"];
 const TURNO_MAX_POSTPONE_DAYS = 2;
 
@@ -419,29 +425,68 @@ async function hasUpcomingCheckinNearby(env, calendarId, fromDateExclusive, thro
   return (data.items || []).some((event) => event.status !== "cancelled");
 }
 
-async function findOrCreateTurnoEvent(env, calendarId, { dateOnly, reservationCode, checkinLabel }) {
+// Bryce's cleans are timed 10am-4pm single-day events on the checkout date.
+function cleanWindow(dateOnly) {
+  return {
+    start: { dateTime: `${dateOnly}T10:00:00`, timeZone: CLEANS_TIME_ZONE },
+    end: { dateTime: `${dateOnly}T16:00:00`, timeZone: CLEANS_TIME_ZONE }
+  };
+}
+
+async function listPropertyEvents(env, calendarId, timeMin, timeMax) {
+  const params = new URLSearchParams({
+    timeMin,
+    timeMax,
+    singleEvents: "true",
+    orderBy: "startTime",
+    q: TURNO_PROPERTY_ADDRESS,
+    maxResults: "250"
+  });
+  const data = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events?${params}`);
+  return (data.items || []).filter((e) => e.status !== "cancelled" && (e.summary || "").includes(TURNO_PROPERTY_ADDRESS));
+}
+
+// The description (door code, supply codes, pay) is copied from the most
+// recent existing clean rather than hardcoded: the repo is public, and this
+// way it stays current whenever Bryce edits it on the calendar.
+async function getTurnoDescriptionTemplate(env, calendarId) {
+  const now = new Date();
+  const events = await listPropertyEvents(env, calendarId, addDays(now, -180).toISOString(), addDays(now, 60).toISOString());
+  const latest = events.filter((e) => e.description).pop();
+  return latest ? latest.description.replace(/\n*Same day checkin\s*$/i, "") : "";
+}
+
+async function findOrCreateTurnoEvent(env, calendarId, { dateOnly, reservationCode }) {
   const key = `turno_event:${reservationCode}`;
   const existingId = await env.HERMES_KV.get(key);
   if (existingId) {
     const event = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events/${existingId}`);
-    if (event.start?.date !== dateOnly) {
+    if (!(event.start?.dateTime || event.start?.date || "").startsWith(dateOnly)) {
       return googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events/${existingId}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ start: { date: dateOnly }, end: { date: toDateOnly(addDays(new Date(dateOnly), 1)) } })
+        body: JSON.stringify(cleanWindow(dateOnly))
       });
     }
     return event;
+  }
+
+  // Reuse a clean Bryce (or a backfill) already put on the calendar that day.
+  const sameDay = await listPropertyEvents(env, calendarId, `${dateOnly}T00:00:00-07:00`, `${dateOnly}T23:59:59-07:00`);
+  if (sameDay.length) {
+    await env.HERMES_KV.put(key, sameDay[0].id);
+    return sameDay[0];
   }
 
   const created = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      summary: `Clean: ${TURNO_PROPERTY_ADDRESS} (check-in by ${checkinLabel})`,
-      description: `Turno property, reservation code ${reservationCode}. Auto-assigned by Deja.`,
-      start: { date: dateOnly },
-      end: { date: toDateOnly(addDays(new Date(dateOnly), 1)) }
+      summary: TURNO_PROPERTY_ADDRESS,
+      location: TURNO_PROPERTY_LOCATION,
+      description: await getTurnoDescriptionTemplate(env, calendarId),
+      colorId: CLEANS_COLOR_NO_SAME_DAY_CHECKIN,
+      ...cleanWindow(dateOnly)
     })
   });
   await env.HERMES_KV.put(key, created.id);
@@ -512,12 +557,12 @@ async function createWaveInvoiceForProperty(env, { customerName, productName }) 
 
 const TURNO_WAVE_CUSTOMER_NAME = "Sparks";
 
-async function assignTurnoCleaning(env, { checkinDate, reservationCode }) {
+async function assignTurnoCleaning(env, { checkoutDate, reservationCode }) {
+  if (!checkoutDate) throw new Error("Couldn't find a Check-out line in the reservation email — the clean happens on the checkout date.");
   const calendarId = await getCleansCalendarId(env);
   const roster = await getCleanerRoster(env);
-  const checkinLabel = checkinDate.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 
-  let candidateDate = checkinDate;
+  let candidateDate = checkoutDate;
   for (let postponeCount = 0; postponeCount <= TURNO_MAX_POSTPONE_DAYS; postponeCount++) {
     const dateOnly = toDateOnly(candidateDate);
     for (const name of TURNO_CLEANER_CASCADE) {
@@ -525,9 +570,9 @@ async function assignTurnoCleaning(env, { checkinDate, reservationCode }) {
       if (!email) continue;
       const busy = await isCleanerBusyOnDate(env, calendarId, email, dateOnly);
       if (!busy) {
-        const event = await findOrCreateTurnoEvent(env, calendarId, { dateOnly, reservationCode, checkinLabel });
+        const event = await findOrCreateTurnoEvent(env, calendarId, { dateOnly, reservationCode });
         await inviteCleanerToEvent(env, calendarId, event, email);
-        const note = postponeCount > 0 ? ` (postponed ${postponeCount} day${postponeCount > 1 ? "s" : ""} from the original check-in date — both other cleaners were already booked)` : "";
+        const note = postponeCount > 0 ? ` (postponed ${postponeCount} day${postponeCount > 1 ? "s" : ""} from the checkout date — both other cleaners were already booked)` : "";
         await appendLog(env, { who: "Scheduler", what: `Invited ${name} to clean ${TURNO_PROPERTY_ADDRESS} on ${dateOnly}${note}` });
 
         let invoiceId = null;

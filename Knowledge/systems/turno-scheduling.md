@@ -39,15 +39,19 @@ just fire a one-way webhook.
 - `parseTurnoReservationEmail` / `parseHospitableDate` — regex-extract
   check-in, check-out, reservation code from the raw email text.
 - `assignTurnoCleaning` — the cascade: try Amy, then Ashley, on the
-  check-in date (checked against the shared "Cleans" Google Calendar, not
+  **checkout** date (originally built against the check-in date, which
+  contradicted both Bryce's calendar convention and the postponement rule;
+  fixed 2026-09-25) — checked against the shared "Cleans" Google Calendar, not
   their personal calendars). If both already have a cleaning that day and
   the Cleans calendar shows no other check-in within the next 2 days
   (`TURNO_MAX_POSTPONE_DAYS`), postpones a day at a time, retrying the
   cascade fresh each day. If still stuck, logs to the Activity feed for
   manual attention instead of guessing.
-- `findOrCreateTurnoEvent` / `inviteCleanerToEvent` — creates or moves an
-  all-day event on the Cleans calendar and invites the chosen cleaner via
-  a real Calendar API call.
+- `findOrCreateTurnoEvent` / `inviteCleanerToEvent` — creates or moves a
+  clean in Bryce's standard format (see [[scheduler]]: "2211 Sahara Drive",
+  10am–4pm, Peacock, description copied from the latest existing Sahara
+  clean), reusing any Sahara clean already on that date, and invites the
+  chosen cleaner via a real Calendar API call.
 - `createWaveInvoiceForProperty` — runs automatically right after a
   cleaner is successfully invited. Finds customer "Sparks" (Wave
   customer #94260584) and product "2211 Sahara Drive" ($150, Wave's own
