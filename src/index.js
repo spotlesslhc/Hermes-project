@@ -1865,9 +1865,9 @@ export default {
               }
             }
           }`, { businessId }),
-          waveGraphQL(env, `query {
-            __type(name: "MoneyTransactionCreateInput") { name inputFields { name type { name kind ofType { name kind ofType { name kind } } } } }
-          }`)
+          waveGraphQL(env, `query($t: String!) {
+            __type(name: $t) { name inputFields { name type { name kind ofType { name kind ofType { name kind } } } } }
+          }`, { t: "MoneyTransactionCreateInput" })
         ]);
         return json({ accounts: accounts.business.accounts.edges.map((e) => e.node), inputType });
       } catch (err) {
