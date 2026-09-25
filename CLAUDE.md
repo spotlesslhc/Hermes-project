@@ -68,6 +68,39 @@ edits to Bryce's actual books are too risky to run autonomously. Instead:
    activity log to be manually reversed — the specific values or record
    IDs touched, not just "did X."
 
+## Check for a pending cleaner payroll run at the start of every session
+
+A Cloudflare Cron Trigger posts an Activity log entry every Monday if any
+1099 cleaner is owed money (see `runWeeklyPayrollCheck` in `src/index.js`
+and `Knowledge/systems/payroll.md`) — but nothing about that check is
+automatic beyond the reminder. Bryce still pays by hand (Venmo, or Zelle
+through Foothills Bank), and the whole point of the reminder is that
+*Claude Code* does the actual browser work next time it's brought online.
+
+At the start of a session in this repo, `GET /api/payroll` (or ask Deja
+"what's owed to my cleaners"). If any cleaner has `owed > 0`, that's a
+payroll run waiting — treat it like any other real-money browser task
+(same rules as "Bookkeeping playbooks" above, since sending a payment is
+exactly that kind of task):
+
+1. Open Venmo (or Zelle, via Foothills Bank) in Bryce's real Chrome
+   (Claude in Chrome), with Bryce present. There's no stored Venmo/Zelle
+   handle for either cleaner — search by name in Bryce's own recent
+   recipients, don't guess a handle.
+2. Prefill the amount (the `owed` total) and the note (`paymentNote` —
+   already street-only, no house numbers, safe for a public Venmo
+   transaction) for Bryce to review.
+3. **Never click Send.** That step is Bryce's, every time, regardless of
+   how many times this has been approved before — sending money is
+   outside what Claude ever does unattended, full stop. Zelle also needs
+   Bryce to log into Foothills Bank himself; there's no SSO shortcut for
+   that.
+4. Once Bryce confirms he actually sent it, record it — either the
+   dashboard's Cleaner Payroll section or the `record_cleaner_payment`
+   tool. This is what makes `owed` go back to zero.
+
+If `owed` is 0 for everyone, there's nothing to do here.
+
 ## Log mistakes in the vault
 
 When a session in this repo turns up a real mistake — a bug that shipped
