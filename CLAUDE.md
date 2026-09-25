@@ -45,6 +45,29 @@ folder (not in `Knowledge/tasks/done/`). If any exist:
 If the folder is empty (or only has files under `done/`), there's nothing
 to do here — no need to mention it unless asked.
 
+## Bookkeeping playbooks: how the Bookkeeper agent learns repetitive tasks
+
+Real bookkeeping work in Wave (categorizing transactions, reconciling,
+etc.) isn't something Hermes/Deja does on her own — Wave's public API
+doesn't expose those operations at all, and unsupervised browser-driven
+edits to Bryce's actual books are too risky to run autonomously. Instead:
+
+1. Claude Code does the task once, driving a real browser against Bryce's
+   actual Wave account (his own logged-in Chrome, or a session's own
+   browser) while Bryce watches and approves each step.
+2. While doing it, Claude documents the exact process as a dated playbook
+   in `Knowledge/playbooks/` — see `Knowledge/playbooks/README.md` for
+   the format. This includes an explicit "how to reverse this" section.
+3. Only the purely mechanical, low-risk, repetitive piece of a *stable*
+   playbook gets wired into Hermes itself as a real tool, gated through
+   the existing approval queue (`APPROVAL_REQUIRED_TOOLS` in
+   `src/index.js` — see `Knowledge/systems/approval-queue.md`) like any
+   other tool that changes real-world state. It must follow that playbook
+   exactly unless Bryce specifically says otherwise for that instance.
+4. Any Hermes action taken under a playbook must log enough detail in the
+   activity log to be manually reversed — the specific values or record
+   IDs touched, not just "did X."
+
 ## Log mistakes in the vault
 
 When a session in this repo turns up a real mistake — a bug that shipped
