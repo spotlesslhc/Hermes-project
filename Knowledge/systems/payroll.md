@@ -103,3 +103,37 @@ unattended) tracked separately in
 [[unfinished-projects/cleaner-payroll-automation]]. Not needed for the
 browser-assisted flow above, and not something to build toward without
 Bryce explicitly choosing that path first.
+
+## First real run (2026-09-25): what it caught
+
+Bryce's actual catch-up (Amy's last payment 8/31, Ashley's 9/16) surfaced
+three real bugs, none caught by the mocked tests since they only show up
+against real calendar data:
+
+1. **`paidThrough` off-by-one** — a job on the paid-through date itself
+   was being recounted, since the query started ON that date instead of
+   the day after. Fixed same day.
+2. **Columbine's calendar events have never had a `Pay is $X` line** —
+   every other property does; Columbine just doesn't, so every Columbine
+   job silently disappeared from every cleaner's owed total. Not a code
+   bug — the events genuinely have no pay data. Fixed the three affected
+   events by hand (2026-09-25) once Bryce provided his own paper ledger
+   to cross-check against; **the upstream cause (whatever creates these
+   Columbine events) is still unfixed** and will keep producing
+   pay-less events until someone finds and fixes it.
+3. **Job date used check-in, not checkout** — a multi-day event (a
+   guest's whole stay as one calendar event) was dated by its start.
+   Fixed to use the event's end date, which matches Bryce's own ledger
+   and is when the clean actually happens.
+
+**Zelle's note field rejects `/`** (Foothills Bank's implementation,
+possibly Zelle-wide) and caps at 140 characters — confirmed live when
+sending Amy's payment. `formatPayrollNote`'s output uses `/` for dates
+(e.g. "Sahara Drive 9/27"), which works fine for Venmo but needs manual
+reformatting to dashes ("9-27") before pasting into Zelle. Worth having
+Claude do that substitution automatically for whichever cleaner is paid
+via Zelle (currently Amy), rather than relying on catching it live each
+time.
+
+Both payments recorded cleanly afterward with no mismatch: Amy $1,085
+(7 jobs), Ashley $480 (2 jobs).
