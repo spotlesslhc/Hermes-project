@@ -715,6 +715,126 @@ async function handleTurnoReservationWebhook(request, env) {
   }
 }
 
+// ---- Payroll: what's owed to each 1099 cleaner ----------------------------
+//
+// Phase 1 (this section): track what's owed per cleaner and let Bryce record
+// a payment he already made outside this system (Venmo/Zelle/Cash App) --
+// no money actually moves. Phase 2, once this proves reliable, is having
+// Deja send the payment herself; deferred because Venmo/Zelle/Cash App have
+// no public API for a business to push money to an individual
+// programmatically -- that needs real research (Wave's own bill-pay, or a
+// bank ACH API) before it can be built, not just a code change.
+//
+// "Owed" is computed fresh from the Cleans calendar every time, not stored:
+// for each past (already-happened) event where this cleaner is an attendee
+// who accepted the invite, pull the "Pay is $X" dollar amount out of the
+// description and sum everything after their last-paid-through date. This
+// mirrors how Bryce already writes each job's pay rate on the calendar
+// event itself (see [[scheduler]]), so there's no second source of truth to
+// keep in sync.
+//
+// Recording a payment moves paid-through forward and appends a permanent
+// record -- it never deletes or edits history, so "what did I pay Amy on
+// any given date" stays answerable later.
+
+// No job on the calendar before this date was tracked by this system, so a
+// cleaner's owed total starts counting from here the first time they're
+// looked up, not from whenever they started cleaning for Bryce -- otherwise
+// this would immediately claim he owes for jobs he already paid by hand
+// before payroll tracking existed.
+const PAYROLL_TRACKING_START = "2026-09-26";
+
+function parsePayFromDescription(description) {
+  const match = (description || "").match(/Pay is\s*\$\s*([0-9,]+(?:\.[0-9]{1,2})?)/i);
+  return match ? parseFloat(match[1].replace(/,/g, "")) : null;
+}
+
+async function getCleanerPaidThrough(env, cleanerKey) {
+  const stored = await env.HERMES_KV.get(`payroll:paid_through:${cleanerKey}`);
+  return stored || PAYROLL_TRACKING_START;
+}
+
+// Every completed (start time in the past), non-cancelled event this
+// cleaner accepted, from the day after paidThrough up through yesterday --
+// today's jobs aren't "completed" yet, so they're deliberately excluded.
+async function listCompletedJobsForCleaner(env, calendarId, cleanerEmail, paidThrough) {
+  const timeMin = `${paidThrough}T00:00:01-07:00`;
+  const timeMax = `${toDateOnly(addDays(new Date(), -1))}T23:59:59-07:00`;
+  if (timeMin >= `${timeMax}`) return [];
+  const params = new URLSearchParams({ timeMin, timeMax, singleEvents: "true", orderBy: "startTime", maxResults: "250" });
+  const data = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events?${params}`);
+  return (data.items || [])
+    .filter((e) => e.status !== "cancelled")
+    .filter((e) => (e.attendees || []).some((a) => a.email === cleanerEmail && a.responseStatus === "accepted"))
+    .map((e) => ({
+      date: (e.start?.dateTime || e.start?.date || "").slice(0, 10),
+      property: e.summary,
+      pay: parsePayFromDescription(e.description)
+    }))
+    .filter((job) => job.pay !== null);
+}
+
+async function getCleanerPayrollSummary(env, cleanerKey) {
+  const roster = await getCleanerRoster(env);
+  const email = roster[cleanerKey];
+  if (!email) throw new Error(`Unknown cleaner "${cleanerKey}". Known cleaners: ${Object.keys(roster).join(", ") || "(none configured)"}.`);
+  const calendarId = await getCleansCalendarId(env);
+  const paidThrough = await getCleanerPaidThrough(env, cleanerKey);
+  const jobs = await listCompletedJobsForCleaner(env, calendarId, email, paidThrough);
+  const owed = jobs.reduce((sum, job) => sum + job.pay, 0);
+  return { cleaner: cleanerKey, email, paidThrough, owed, jobCount: jobs.length, jobs };
+}
+
+async function getAllCleanerPayrollSummaries(env) {
+  const roster = await getCleanerRoster(env);
+  const summaries = {};
+  for (const cleanerKey of Object.keys(roster)) {
+    summaries[cleanerKey] = await getCleanerPayrollSummary(env, cleanerKey);
+  }
+  return summaries;
+}
+
+const PAYMENT_INDEX_KEY = "payroll_payment_index";
+
+// Same lazy-index pattern as the approval queue's PENDING_INDEX_KEY, so
+// reading payment history never needs a KV list() call (see the comment
+// above PENDING_INDEX_KEY for why that matters).
+async function addToPaymentIndex(env, id) {
+  const raw = await env.HERMES_KV.get(PAYMENT_INDEX_KEY);
+  const ids = raw ? JSON.parse(raw) : [];
+  ids.push(id);
+  await env.HERMES_KV.put(PAYMENT_INDEX_KEY, JSON.stringify(ids));
+}
+
+// Records a payment Bryce already made outside this system. Moves
+// paid-through forward to `date` regardless of whether `amount` matches
+// the computed owed total -- Bryce might round, or pay a different amount
+// on purpose -- but the mismatch (if any) is reported back so he notices.
+async function recordCleanerPayment(env, { cleaner_name, amount, date }) {
+  const cleanerKey = cleaner_name.trim().toLowerCase();
+  const before = await getCleanerPayrollSummary(env, cleanerKey);
+  const paidOn = date || toDateOnly(new Date());
+
+  const record = {
+    id: crypto.randomUUID(),
+    cleaner: cleanerKey,
+    amount,
+    date: paidOn,
+    jobsCovered: before.jobCount,
+    recordedAt: new Date().toISOString()
+  };
+  await env.HERMES_KV.put(`payroll_payment:${record.id}`, JSON.stringify(record));
+  await addToPaymentIndex(env, record.id);
+  await env.HERMES_KV.put(`payroll:paid_through:${cleanerKey}`, paidOn);
+
+  const mismatch = Math.abs(amount - before.owed) > 0.01
+    ? ` (computed owed was $${before.owed.toFixed(2)} for ${before.jobCount} job${before.jobCount === 1 ? "" : "s"} -- flagging the difference, not blocking it)`
+    : "";
+  await appendLog(env, { who: "Bookkeeper", what: `Recorded $${amount.toFixed(2)} paid to ${cleaner_name} through ${paidOn}${mismatch}` });
+
+  return { ...record, previouslyOwed: before.owed, mismatch: mismatch !== "" };
+}
+
 // ---- KV helpers ---------------------------------------------------------
 
 const DEFAULT_STATUS = {
@@ -1249,6 +1369,18 @@ async function dispatchTool(env, name, input) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date || "")) throw new Error("date must be YYYY-MM-DD");
     return await cancelTurnoClean(env, { date: input.date });
   }
+  if (name === "get_cleaner_payroll") {
+    const summaries = input.cleaner_name
+      ? { [input.cleaner_name.trim().toLowerCase()]: await getCleanerPayrollSummary(env, input.cleaner_name.trim().toLowerCase()) }
+      : await getAllCleanerPayrollSummaries(env);
+    return JSON.stringify(summaries);
+  }
+  if (name === "record_cleaner_payment") {
+    if (typeof input.amount !== "number" || input.amount <= 0) throw new Error("amount must be a positive number");
+    const record = await recordCleanerPayment(env, input);
+    const mismatchNote = record.mismatch ? ` Heads up: the amount computed from completed jobs was $${record.previouslyOwed.toFixed(2)}, not $${input.amount.toFixed(2)} -- tell Bryce this in case it wasn't intentional.` : "";
+    return `Recorded $${input.amount.toFixed(2)} paid to ${input.cleaner_name} through ${record.date}.${mismatchNote}`;
+  }
   if (name === "list_vault_notes") {
     const files = await listVaultNotes(env);
     return files.length ? files.join("\n") : "No notes found in Knowledge/.";
@@ -1394,6 +1526,30 @@ async function handleAsk(request, env) {
         cleaner_name: { type: "string", description: "The cleaner's first name as Bryce would say it, e.g. \"Amy\" or \"Ashley\". Must match a name in the current roster." }
       },
       required: ["property", "cleaner_name"]
+    }
+  });
+  tools.push({
+    name: "get_cleaner_payroll",
+    description: "Look up how much is currently owed to one or all 1099 cleaners, computed from completed (past) cleanings on the Cleans calendar since they were last paid. No approval needed, read-only.",
+    input_schema: {
+      type: "object",
+      properties: {
+        cleaner_name: { type: "string", description: "A specific cleaner's first name, e.g. \"Amy\". Omit to get everyone in the roster." }
+      },
+      required: []
+    }
+  });
+  tools.push({
+    name: "record_cleaner_payment",
+    description: "Record that Bryce already paid a cleaner (via Venmo, Zelle, Cash App, etc.) -- this does NOT send any money, it just logs that he did and moves their owed total forward. Use when Bryce tells you he paid someone, e.g. \"I paid Amy $480\". No approval needed, since this is Bryce reporting his own action, not something being inferred.",
+    input_schema: {
+      type: "object",
+      properties: {
+        cleaner_name: { type: "string", description: "The cleaner's first name, e.g. \"Amy\"." },
+        amount: { type: "number", description: "The dollar amount actually paid." },
+        date: { type: "string", description: "The date paid, as YYYY-MM-DD. Defaults to today if not given." }
+      },
+      required: ["cleaner_name", "amount"]
     }
   });
   tools.push({
@@ -1614,6 +1770,25 @@ export default {
         return json({ connected: true, calendarId });
       } catch (err) {
         return json({ connected: false, error: err.message }, { status: 502 });
+      }
+    }
+    if (pathname === "/api/payroll" && method === "GET") {
+      try {
+        return json(await getAllCleanerPayrollSummaries(env));
+      } catch (err) {
+        return json({ error: err.message }, { status: 502 });
+      }
+    }
+    if (pathname === "/api/payroll/pay" && method === "POST") {
+      try {
+        const body = await request.json();
+        if (!body.cleaner_name || typeof body.amount !== "number" || body.amount <= 0) {
+          return json({ error: "cleaner_name and a positive amount are required" }, { status: 400 });
+        }
+        const record = await recordCleanerPayment(env, body);
+        return json({ ok: true, record });
+      } catch (err) {
+        return json({ error: err.message }, { status: 400 });
       }
     }
     if (pathname === "/api/wave/status" && method === "GET") {

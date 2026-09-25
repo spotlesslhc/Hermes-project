@@ -96,3 +96,9 @@ overrides the default; there's no dashboard UI for editing it yet).
   unrelated to this build, tracked separately in
   [[unfinished-projects/zapier-overseer-buildout]] (formerly
   `Knowledge/unfinished-projects/zapier-overseer-buildout.md`).
+
+## Related: what each cleaner is owed
+
+The "Pay is $X" line in each event's description (documented above) is
+also what [[payroll]] reads to compute what's owed to each cleaner —
+built 2026-09-26, see that doc for how it works.
