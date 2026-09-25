@@ -1869,7 +1869,10 @@ export default {
             __type(name: $t) { name inputFields { name type { name kind ofType { name kind ofType { name kind } } } } }
           }`, { t: "MoneyTransactionCreateInput" })
         ]);
-        return json({ accounts: accounts.business.accounts.edges.map((e) => e.node), inputType });
+        const relevant = accounts.business.accounts.edges
+          .map((e) => e.node)
+          .filter((a) => /cash|payroll|salary|wage/i.test(a.name) || a.type?.value === "EXPENSE");
+        return json({ accounts: relevant, inputType });
       } catch (err) {
         return json({ error: err.message }, { status: 502 });
       }
