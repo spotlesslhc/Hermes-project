@@ -1859,8 +1859,8 @@ export default {
         const enumQuery = `query($t: String!) {
           __type(name: $t) { name enumValues { name } }
         }`;
-        const mutationQuery = `query {
-          __type(name: "Mutation") {
+        const mutationQuery = `query($t: String!) {
+          __type(name: $t) {
             fields(includeDeprecated: true) {
               name
               args { name type { name kind ofType { name kind } } }
@@ -1870,7 +1870,7 @@ export default {
         const [direction, balance, mutations] = await Promise.all([
           waveGraphQL(env, enumQuery, { t: "TransactionDirection" }),
           waveGraphQL(env, enumQuery, { t: "BalanceType" }),
-          waveGraphQL(env, mutationQuery)
+          waveGraphQL(env, mutationQuery, { t: "Mutation" })
         ]);
         const moneyTxFields = mutations.__type.fields.filter((f) => /moneyTransaction/i.test(f.name));
         return json({ direction, balance, moneyTxFields });
