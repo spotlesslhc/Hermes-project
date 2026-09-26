@@ -1901,21 +1901,6 @@ export default {
         return json({ connected: false, error: err.message }, { status: 502 });
       }
     }
-    if (pathname === "/api/debug/wave-tx-test" && method === "POST") {
-      try {
-        const businessId = await getWaveBusinessId(env);
-        const txId = await createWavePayrollExpense(env, {
-          businessId,
-          externalId: `debug-test-${Date.now()}`,
-          date: toDateOnly(new Date()),
-          description: "TEST - DELETE ME - payroll automation schema test",
-          amount: 0.01
-        });
-        return json({ ok: true, transactionId: txId });
-      } catch (err) {
-        return json({ error: err.message }, { status: 502 });
-      }
-    }
     // Anything else falls back to the static files in /public (this
     // shouldn't normally be needed — Cloudflare usually serves matching
     // assets before the Worker even runs — but it's a safety net).
