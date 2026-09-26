@@ -137,3 +137,13 @@ time.
 
 Both payments recorded cleanly afterward with no mismatch: Amy $1,085
 (7 jobs), Ashley $480 (2 jobs).
+
+## Wave bookkeeping is now automatic too (2026-09-25)
+
+Every `recordCleanerPayment` call also creates a matching Wave expense
+transaction — see [[playbooks/2026-09-25-record-cleaner-payroll-expense]]
+for the exact format, account IDs, and why this one runs without an
+approval gate (Bryce's explicit call, since it's cheap to correct and
+doesn't move real money). `createWavePayrollExpense` in `src/index.js`
+does the actual Wave call; a failure here never blocks the payroll
+tracking itself, just logs to Activity for a manual entry.
