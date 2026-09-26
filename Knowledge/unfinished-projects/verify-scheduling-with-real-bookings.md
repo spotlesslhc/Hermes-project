@@ -13,6 +13,21 @@ Several scheduling paths are built and tested only against mocks or in
 isolation. None has yet run end to end on a real booking. Until each one
 has, treat it as unverified in production.
 
+## A likely explanation for why nothing's been verified yet (2026-09-26)
+
+The Turno Zap's webhook step (`/webhooks/turno-reservation`) has no
+Cloudflare Access credentials configured, and the whole Worker has sat
+behind Cloudflare Access since 2026-09-21. Confirmed directly: an
+unauthenticated POST to that URL gets redirected to an Access login page,
+not the Worker's actual logic — and Zapier would read that redirect as a
+normal "success," not an error. **This automation may have been silently
+unreachable this entire time.** Full writeup in
+[[decisions/2026-09-26-webhook-secret-auth]]. Fix in progress: the Worker
+now also checks its own shared secret independently of Access, but the
+Turno Zap step still needs both that secret *and* a Cloudflare Access
+Service Token added to its headers before this can work at all — check
+that before waiting on a "next real booking."
+
 ## What's left — check on the next real booking of each kind
 
 1. **`assign_cleaner` success path** ([[scheduler]]). Only the failure

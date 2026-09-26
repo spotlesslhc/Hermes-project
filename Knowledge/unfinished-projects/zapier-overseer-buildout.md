@@ -77,21 +77,43 @@ Full current state of both Zaps is in [[zapier-automations]]. Summary:
   on a real failure, replacing the permanently-static `zapsWatched: 6,
   errors: 0` stub with live data and a weekly-resetting error count.
 
+- **`ZAPIER_WEBHOOK_SECRET` created (2026-09-26)** — Bryce ran the
+  `wrangler secrets-store secret create` command himself. Merged and
+  deployed (`e32b632`).
+- **Found a real, likely-live bug while verifying the above (2026-09-26)**:
+  the Turno webhook Zap has no Cloudflare Access Service Token configured,
+  so it's probably been silently unreachable since Access went live
+  2026-09-21 — Zapier would see a redirect and call it a success. Full
+  writeup in [[decisions/2026-09-26-webhook-secret-auth]] and
+  [[verify-scheduling-with-real-bookings]]. Considered (and ruled out)
+  splitting Cloudflare Access by path to let webhooks bypass it entirely —
+  not achievable without adding a real custom domain, since the "Workers"
+  Access destination type has no path field. Fixed the code side instead:
+  every webhook handler (`/webhooks/reservation`,
+  `/webhooks/turno-reservation`, `/webhooks/zapier-status`) now
+  independently checks `ZAPIER_WEBHOOK_SECRET` via
+  `requireZapierWebhookSecret()`, so a Cloudflare-side misconfiguration
+  can't cause a silent failure again. PR: `feature/webhook-secret-auth`.
+
 ## What's left
 
-1. **Bryce: create the `ZAPIER_WEBHOOK_SECRET` value** — run
-   `wrangler secrets-store secret create 8f15d6429b5741f9ac32e05415413a65
-   --name ZAPIER_WEBHOOK_SECRET --scopes workers` and paste a random value
-   at the prompt (not via a script/flag, so it never hits shell history).
-2. **Wire Path E and Path G's Python code to actually call the new
-   webhook** on failure (`requests.post` to
-   `https://<worker-domain>/webhooks/zapier-status` with header
-   `X-Zapier-Secret`, body `{zap, step, error}`). This is a live Zapier
-   edit — needs a session with Bryce present, same as every other change
-   this week.
+1. **Bryce: add headers to the Turno Zap's webhook step** — both the
+   existing "Hermes_Cloudflare Auth" Cloudflare Access Service Token
+   (`CF-Access-Client-Id` / `CF-Access-Client-Secret` — check
+   `tools/deja-bridge/.env.local` for the values, since that script
+   already uses this same token) and the new shared secret
+   (`X-Zapier-Secret`, same value as `ZAPIER_WEBHOOK_SECRET`). Without
+   both, this automation still can't reach Hermes at all.
+2. **Audit whatever Zap calls `/webhooks/reservation`** for the same gap
+   — not yet identified/checked this session.
+3. **Wire Path E and Path G's Python code to actually call
+   `/webhooks/zapier-status`** on failure (`requests.post` with the same
+   two headers as above, body `{zap, step, error}`). This is a live
+   Zapier edit — needs a session with Bryce present, same as every other
+   change this week.
 
 ## Blocked on
 
-Item 1 needs Bryce to actually run the wrangler command (Claude Code
-won't generate/set the real secret value itself — see the design doc).
-Item 2 needs a session where Bryce can approve live Zapier edits.
+Items 1–3 all need Bryce present (adding real Access/secret credentials
+to Zapier steps isn't something Claude Code does itself, and item 3 is a
+live Zapier edit needing approval same as always).

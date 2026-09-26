@@ -686,6 +686,9 @@ async function cancelTurnoClean(env, { reservationCode, date }) {
 }
 
 async function handleTurnoReservationWebhook(request, env) {
+  const authError = requireZapierWebhookSecret(request, env);
+  if (authError) return authError;
+
   let body;
   try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, { status: 400 }); }
   const emailText = [body.subject, body.body_plain, body.body].filter(Boolean).join("\n");
@@ -1765,7 +1768,33 @@ async function handleAsk(request, env) {
   return json({ reply, keepListening });
 }
 
+// A shared secret only Zapier and this Worker know, checked independently of
+// whatever Cloudflare Access is (or isn't) doing in front of the Worker --
+// see Knowledge/decisions/2026-09-26-webhook-secret-auth.md. This was added
+// after discovering the Turno webhook's Cloudflare Access Service Token was
+// never actually wired up, meaning that automation could have been silently
+// unreachable this whole time with Zapier still reporting "success." Access
+// is still the primary gate, but every webhook now checks for itself too,
+// so a Cloudflare-side misconfiguration can't cause a silent failure again.
+function timingSafeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
+
+function requireZapierWebhookSecret(request, env) {
+  const providedSecret = request.headers.get("x-zapier-secret") || "";
+  if (!env.ZAPIER_WEBHOOK_SECRET || !timingSafeEqual(providedSecret, env.ZAPIER_WEBHOOK_SECRET)) {
+    return json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return null;
+}
+
 async function handleReservation(request, env) {
+  const authError = requireZapierWebhookSecret(request, env);
+  if (authError) return authError;
+
   let body;
   try {
     body = await request.json();
@@ -1804,25 +1833,14 @@ async function handleReservation(request, env) {
   return json({ ok: true });
 }
 
-// A shared secret only Zapier and this Worker know, rather than any real
-// Zapier account credential -- see Knowledge/decisions/2026-09-26-deja-zapier-oversight-design.md
-// for why this is the whole of Deja's "Zapier access": Zapier has no API for
-// reading or editing a personal account's own Zaps, so genuine edits still
-// go through a human-supervised browser session. This just lets each Zap's
-// own code steps report a real failure back here instead of Zapier's
-// dashboard status being a permanently-static stub.
-function timingSafeEqual(a, b) {
-  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return mismatch === 0;
-}
-
+// Also lets each Zap's own code steps report a real failure back here
+// instead of Zapier's dashboard status being a permanently-static stub --
+// see Knowledge/decisions/2026-09-26-deja-zapier-oversight-design.md for why
+// this (plus the human-supervised browser sessions used elsewhere) is the
+// whole of Deja's "Zapier access."
 async function handleZapierStatusWebhook(request, env) {
-  const providedSecret = request.headers.get("x-zapier-secret") || "";
-  if (!env.ZAPIER_WEBHOOK_SECRET || !timingSafeEqual(providedSecret, env.ZAPIER_WEBHOOK_SECRET)) {
-    return json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const authError = requireZapierWebhookSecret(request, env);
+  if (authError) return authError;
 
   let body;
   try {
