@@ -36,7 +36,8 @@ approval history. Actually removing that step would require:
    on the dashboard even if Claude is the one submitting it — this
    wouldn't become fully unattended, just remove the manual browser click.
 3. Supervised trial runs before trusting it, same pattern as
-   [[bookkeeping-playbooks-rollout]].
+   [[playbooks/README]] (build once with Bryce watching, document as a
+   dated playbook, only then wire in the mechanical piece).
 
 ## Blocked on
 
