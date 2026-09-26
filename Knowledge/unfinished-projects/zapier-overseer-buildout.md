@@ -3,7 +3,7 @@ title: Zapier Overseer buildout
 tags: [zapier-overseer, zapier]
 started: 2026-09-22
 updated: 2026-09-26
-status: Invoicing Zap Paths E and G fixed (v6); calendar Zap's cancellation handling fixed (v16); stale field mappings and access design still open
+status: Invoicing Zap Paths E and G fixed (v6), stale field mappings resolved (v7); calendar Zap's cancellation handling fixed (v16); Deja's access design still open
 ---
 
 # Zapier Overseer buildout
@@ -53,12 +53,18 @@ Full current state of both Zaps is in [[zapier-automations]]. Summary:
   [[decisions/2026-09-26-invoicing-zap-path-g-bugs]]. A throwaway test
   draft invoice (#469, "1795 Palo Verde Boulevard South", 2026-08-16)
   from verifying this is still sitting in Wave and needs deleting.
+- **Stale `Action` field-mapping warnings on Paths A, B, C, G resolved
+  (v7, 2026-09-26)** — turned out not to be a broken mapping at all, just
+  a trigger sample that happened to be from a webhook type without an
+  `action` key. Fixed by refreshing the sample, zero logic changes. Full
+  writeup in
+  [[decisions/2026-09-26-invoicing-zap-stale-field-mappings]], including
+  a mistake made and caught mid-investigation (an accidental click
+  cleared Path A's `Action` mapping; restored before publishing).
 
 ## What's left
 
-1. **Fix the stale Hospitable field-mapping warnings** on Paths A, B
-   and C.
-2. **Design "full view and edit" access for Deja** (Zapier's own API, a
+1. **Design "full view and edit" access for Deja** (Zapier's own API, a
    stored key, and real thought about blast radius, since the account
    already holds a cleartext Wave token — see
    [[2026-09-22-zapier-wave-token-cleartext]]) before wiring anything

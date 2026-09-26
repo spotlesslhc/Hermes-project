@@ -94,7 +94,7 @@ for next time is in
    after the calendar change, or the step ends up with an empty
    required field.
 
-### 2. "Hospitable Reservations to Wave Invoices" (now v6, active)
+### 2. "Hospitable Reservations to Wave Invoices" (now v7, active)
 
 Triggered by a Catch Hook, fed by Zap #1's POST step. This one is much
 bigger than it first looked — **7 paths total (A, B, C, D, E, F, G)**,
@@ -109,9 +109,9 @@ distinction matters):
   Invoice. This is consistent across all three, so it's very likely
   intentional — almost certainly a **cancellation-fee invoice**, not
   backwards logic (an earlier pass here wrongly called Path C's logic
-  "backwards"; retracted). All three have a live "field not available in
-  current sample" warning on their Action condition — a real, shared
-  field-mapping staleness issue (see below). Since **v4** the Find
+  "backwards"; retracted). Their Action condition's "field not available
+  in current sample" warning is resolved as of v7 — see the cross-cutting
+  note below, it was never actually a broken mapping. Since **v4** the Find
   Customer steps no longer create a customer on a miss (Bryce's rule:
   always find existing Wave records, never create). Each Create Invoice
   step's **Invoice Date is mapped to `1. Check Out`**, i.e. the cleaning
@@ -181,15 +181,23 @@ unpublishable draft (pre-existing, not something this review caused).
 Bryce confirmed he doesn't use it. **Moved to Zapier's trash** (30-day
 recoverable window, then permanent) during this session.
 
-## Cross-cutting issue: stale Hospitable field mappings
+## Cross-cutting issue: stale Hospitable field mappings — resolved (v7, 2026-09-26)
 
-Multiple warnings across the invoicing Zap's Paths A, B, and C (and
-previously the deleted draft on Zap #3) all say the same thing: *"This
-mapped value isn't available in the current sample."* Consistent with
-Hospitable's webhook payload schema having changed at some point without
-every downstream field mapping catching up. Worth fixing directly in
-Zapier at some point — a good early candidate for what real Zapier
-Overseer functionality should watch for, beyond "did a run error."
+Paths A, B, C, and G all showed the same warning on their `Action`
+condition: *"This mapped value isn't available in the current sample."*
+Turned out **not to be a broken mapping at all** — see
+[[decisions/2026-09-26-invoicing-zap-stale-field-mappings]]. Hospitable
+only includes an `action` key on `reservation.changed`-type webhooks; the
+Catch Hook's cached sample happened to be a plain accepted/cancelled
+webhook without one, so Zapier's validator flagged every reference to it
+as stale even though the actual field mapping (`375885985__action`) was
+correct and would resolve fine on real traffic. Fixed by pulling a fresh
+trigger sample that includes a `reservation.changed` webhook (the real
+206 Columbine Drive cancellation from earlier this session) — zero logic
+changes, the warning was cosmetic. **Lesson for the Zapier Overseer**:
+a "field not available in current sample" warning needs checking against
+what *kind* of webhook the field only appears on before assuming the
+mapping itself is wrong.
 
 ## Changes made during this review (both explicitly authorized by Bryce)
 
