@@ -3,7 +3,7 @@ title: Zapier Overseer buildout
 tags: [zapier-overseer, zapier]
 started: 2026-09-22
 updated: 2026-09-26
-status: Invoicing Zap Paths E and G fixed (v6), stale field mappings resolved (v7); calendar Zap's cancellation handling fixed (v16); Deja's access design still open
+status: Invoicing Zap Paths E and G fixed (v6), stale field mappings resolved (v7); calendar Zap's cancellation handling fixed (v16); Deja's Zapier access designed and half-built (error webhook), Zap-side wiring left
 ---
 
 # Zapier Overseer buildout
@@ -16,8 +16,12 @@ through Zapier upstream of both the Scheduler and the Bookkeeper's
 invoicing. Bryce defines "oversight" as being able to **view and edit
 any part of Zapier**, not just get failure notifications.
 
-`zapier_overseer` in `DEFAULT_STATUS` (`src/index.js`) is still a
-hardcoded stub (`zapsWatched: 6, errors: 0`) that nothing updates.
+**Turns out full API access for either half doesn't exist on any Zapier
+plan** — see
+[[decisions/2026-09-26-deja-zapier-oversight-design]]. "View" is now a
+real webhook endpoint (built, needs the Zap-side wiring below); "edit"
+stays a human-supervised browser session, which is what it already was
+and is the only way Zapier itself supports editing a Zap's config.
 
 ## Done
 
@@ -61,15 +65,33 @@ Full current state of both Zaps is in [[zapier-automations]]. Summary:
   [[decisions/2026-09-26-invoicing-zap-stale-field-mappings]], including
   a mistake made and caught mid-investigation (an accidental click
   cleared Path A's `Action` mapping; restored before publishing).
+- **Deja's Zapier oversight designed, "view" half built (2026-09-26)** —
+  confirmed directly against Zapier's account settings and API docs that
+  no plan (Bryce is on Pro) offers an API for a personal account to read
+  or edit its own Zaps; the real "Zap Management API" belongs to a
+  different product ("Powered by Zapier," for embedding Zapier in
+  someone else's SaaS product). Full design in
+  [[decisions/2026-09-26-deja-zapier-oversight-design]]. Built
+  `POST /webhooks/zapier-status` (PR: `feature/zapier-error-webhook`) —
+  a shared-secret-authenticated endpoint a Zap's own code step can call
+  on a real failure, replacing the permanently-static `zapsWatched: 6,
+  errors: 0` stub with live data and a weekly-resetting error count.
 
 ## What's left
 
-1. **Design "full view and edit" access for Deja** (Zapier's own API, a
-   stored key, and real thought about blast radius, since the account
-   already holds a cleartext Wave token — see
-   [[2026-09-22-zapier-wave-token-cleartext]]) before wiring anything
-   into `src/index.js`.
+1. **Bryce: create the `ZAPIER_WEBHOOK_SECRET` value** — run
+   `wrangler secrets-store secret create 8f15d6429b5741f9ac32e05415413a65
+   --name ZAPIER_WEBHOOK_SECRET --scopes workers` and paste a random value
+   at the prompt (not via a script/flag, so it never hits shell history).
+2. **Wire Path E and Path G's Python code to actually call the new
+   webhook** on failure (`requests.post` to
+   `https://<worker-domain>/webhooks/zapier-status` with header
+   `X-Zapier-Secret`, body `{zap, step, error}`). This is a live Zapier
+   edit — needs a session with Bryce present, same as every other change
+   this week.
 
 ## Blocked on
 
-Nothing — pick up any item whenever.
+Item 1 needs Bryce to actually run the wrangler command (Claude Code
+won't generate/set the real secret value itself — see the design doc).
+Item 2 needs a session where Bryce can approve live Zapier edits.

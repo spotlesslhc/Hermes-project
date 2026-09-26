@@ -53,6 +53,11 @@
       "binding": "GOOGLE_CALENDAR_CLIENT_SECRET",
       "store_id": "8f15d6429b5741f9ac32e05415413a65",
       "secret_name": "GOOGLE_CALENDAR_CLIENT_SECRET"
+    },
+    {
+      "binding": "ZAPIER_WEBHOOK_SECRET",
+      "store_id": "8f15d6429b5741f9ac32e05415413a65",
+      "secret_name": "ZAPIER_WEBHOOK_SECRET"
     }
   ],
   "vars": {

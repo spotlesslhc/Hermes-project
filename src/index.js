@@ -934,10 +934,19 @@ async function runWeeklyPayrollCheck(env) {
   await appendLog(env, { who: "Bookkeeper", what });
 }
 
+// The dashboard labels this counter "Errors this week", so it needs an
+// actual weekly reset rather than accumulating forever -- piggybacks on the
+// same Monday cron trigger as the payroll check.
+async function resetWeeklyZapierErrorCount(env) {
+  const status = await getStatusOrDefault(env);
+  const overseer = status.zapier_overseer || {};
+  await setStatus(env, { zapier_overseer: { ...overseer, errors: 0 } });
+}
+
 // ---- KV helpers ---------------------------------------------------------
 
 const DEFAULT_STATUS = {
-  zapier_overseer: { status: "running", label: "Running", lastChecked: null, zapsWatched: 6, errors: 0 },
+  zapier_overseer: { status: "running", label: "Running", lastChecked: null, zapsWatched: 2, errors: 0 },
   scheduler: { status: "running", label: "Running", unassigned: 0, nextJob: null },
   bookkeeper: { status: "running", label: "Running", lastEntry: null, openItems: 0 },
   site_editor: { status: "idle", label: "Idle", lastPublish: null }
@@ -1795,6 +1804,55 @@ async function handleReservation(request, env) {
   return json({ ok: true });
 }
 
+// A shared secret only Zapier and this Worker know, rather than any real
+// Zapier account credential -- see Knowledge/decisions/2026-09-26-deja-zapier-oversight-design.md
+// for why this is the whole of Deja's "Zapier access": Zapier has no API for
+// reading or editing a personal account's own Zaps, so genuine edits still
+// go through a human-supervised browser session. This just lets each Zap's
+// own code steps report a real failure back here instead of Zapier's
+// dashboard status being a permanently-static stub.
+function timingSafeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
+
+async function handleZapierStatusWebhook(request, env) {
+  const providedSecret = request.headers.get("x-zapier-secret") || "";
+  if (!env.ZAPIER_WEBHOOK_SECRET || !timingSafeEqual(providedSecret, env.ZAPIER_WEBHOOK_SECRET)) {
+    return json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  const zap = body.zap || "Unknown Zap";
+  const step = body.step || "Unknown step";
+  const error = body.error || "No error message provided";
+
+  const status = await getStatusOrDefault(env);
+  const overseer = status.zapier_overseer || {};
+  await setStatus(env, {
+    zapier_overseer: {
+      ...overseer,
+      lastChecked: new Date().toISOString(),
+      errors: (overseer.errors || 0) + 1
+    }
+  });
+
+  await appendLog(env, {
+    who: "Zapier Overseer",
+    what: `"${zap}" failed at step "${step}": ${error}`
+  });
+
+  return json({ ok: true });
+}
+
 async function handlePendingList(env) {
   return json(await listPendingActions(env));
 }
@@ -1863,6 +1921,9 @@ export default {
     if (pathname === "/webhooks/turno-reservation" && method === "POST") {
       return handleTurnoReservationWebhook(request, env);
     }
+    if (pathname === "/webhooks/zapier-status" && method === "POST") {
+      return handleZapierStatusWebhook(request, env);
+    }
     if (pathname === "/api/google-calendar/status" && method === "GET") {
       try {
         const calendarId = await getCleansCalendarId(env);
@@ -1912,5 +1973,6 @@ export default {
 
   async scheduled(event, env, ctx) {
     ctx.waitUntil(runWeeklyPayrollCheck(env));
+    ctx.waitUntil(resetWeeklyZapierErrorCount(env));
   }
 };

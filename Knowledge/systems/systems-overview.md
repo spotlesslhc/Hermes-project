@@ -112,6 +112,11 @@ by the hour. Hermes' Worker does these jobs:
 6. Listens for `/webhooks/reservation` — a way for Zapier to notify
    Hermes the moment a new booking comes in, so it can eventually flag
    it for the [[Scheduler Agent]].
+7. Listens for `/webhooks/zapier-status` — lets a Zap's own code steps
+   report a real failure back to Hermes (secret-authenticated, no Zapier
+   account credential involved), updating the Zapier Overseer card and
+   Activity log with live data instead of a static stub. See
+   [[decisions/2026-09-26-deja-zapier-oversight-design]].
 
 The dashboard page itself (the HTML you see) is *not* run by this
 program — Cloudflare just serves it directly, like a plain file. The
