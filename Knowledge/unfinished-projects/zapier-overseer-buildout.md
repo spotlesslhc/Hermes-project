@@ -3,7 +3,7 @@ title: Zapier Overseer buildout
 tags: [zapier-overseer, zapier]
 started: 2026-09-22
 updated: 2026-09-26
-status: Invoicing Zap Paths E and G fixed (v6), stale field mappings resolved (v7); calendar Zap's cancellation handling fixed (v16); Deja's Zapier access designed and half-built (error webhook), Zap-side wiring left
+status: Invoicing Zap Paths E and G fixed (v6), stale field mappings resolved (v7); calendar Zap's cancellation handling fixed (v16); Turno webhook auth fixed and verified; Deja's error webhook built, still needs Zap-side wiring
 ---
 
 # Zapier Overseer buildout
@@ -93,27 +93,32 @@ Full current state of both Zaps is in [[zapier-automations]]. Summary:
   `/webhooks/turno-reservation`, `/webhooks/zapier-status`) now
   independently checks `ZAPIER_WEBHOOK_SECRET` via
   `requireZapierWebhookSecret()`, so a Cloudflare-side misconfiguration
-  can't cause a silent failure again. PR: `feature/webhook-secret-auth`.
+  can't cause a silent failure again. Merged (`a350cd8`).
+- **Turno webhook auth fixed and verified live (2026-09-26)** — Bryce
+  added both the Cloudflare Access Service Token headers
+  (`CF-Access-Client-Id`/`Secret`, from the existing "Hermes_Cloudflare
+  Auth" token) and the new `X-Zapier-Secret` header to the Turno Zap's
+  webhook step, published as v2. Verified end to end with a real test
+  run: the request passed Cloudflare Access, passed the new secret check,
+  and reached Hermes' actual reservation-parsing logic (which correctly
+  rejected the test data — a generic Gmail forwarding-confirmation email,
+  not a real reservation — with no side effects created, so nothing
+  needed cleaning up). Full chain is sound; the next real Sahara
+  reservation email is the last remaining confirmation, per
+  [[verify-scheduling-with-real-bookings]].
 
 ## What's left
 
-1. **Bryce: add headers to the Turno Zap's webhook step** — both the
-   existing "Hermes_Cloudflare Auth" Cloudflare Access Service Token
-   (`CF-Access-Client-Id` / `CF-Access-Client-Secret` — check
-   `tools/deja-bridge/.env.local` for the values, since that script
-   already uses this same token) and the new shared secret
-   (`X-Zapier-Secret`, same value as `ZAPIER_WEBHOOK_SECRET`). Without
-   both, this automation still can't reach Hermes at all.
-2. **Audit whatever Zap calls `/webhooks/reservation`** for the same gap
-   — not yet identified/checked this session.
-3. **Wire Path E and Path G's Python code to actually call
+1. **Audit whatever Zap calls `/webhooks/reservation`** for the same gap
+   the Turno Zap had — not yet identified/checked this session.
+2. **Wire Path E and Path G's Python code to actually call
    `/webhooks/zapier-status`** on failure (`requests.post` with the same
-   two headers as above, body `{zap, step, error}`). This is a live
-   Zapier edit — needs a session with Bryce present, same as every other
-   change this week.
+   Access + shared-secret headers as the Turno Zap now has, body
+   `{zap, step, error}`). This is a live Zapier edit — needs a session
+   with Bryce present, same as every other change this week.
 
 ## Blocked on
 
-Items 1–3 all need Bryce present (adding real Access/secret credentials
-to Zapier steps isn't something Claude Code does itself, and item 3 is a
-live Zapier edit needing approval same as always).
+Both items need a session where Bryce can approve live Zapier edits
+(item 1 to check/fix whatever Zap that turns out to be, item 2 to add the
+new POST call to Path E/G's code).

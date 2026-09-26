@@ -1,7 +1,7 @@
 ---
 title: Every Hermes webhook now checks its own shared secret, not just Cloudflare Access
 tags: [decisions, security, zapier-overseer, scheduler]
-status: fixed (code); Turno Zap headers still need adding by Bryce
+status: fixed and verified live for the Turno Zap; /webhooks/reservation's caller still needs auditing
 updated: 2026-09-26
 ---
 
@@ -58,20 +58,37 @@ callers now get an explicit `401`, both at the Access layer (if the
 Service Token is also missing) and, if that layer is ever bypassed or
 misconfigured, from the Worker's own code too.
 
-## What's still needed
+## Turno Zap fixed and verified (2026-09-26)
 
-The Turno Zap's `Webhooks by Zapier POST` step still needs its actual
-headers added — this fixes the code side but doesn't retroactively add
-headers to the live Zap:
+Bryce added both headers to the Turno Zap's `Webhooks by Zapier POST`
+step and published it (v2):
 1. **Cloudflare Access Service Token** (`CF-Access-Client-Id` /
-   `CF-Access-Client-Secret`) — using the existing "Hermes_Cloudflare
-   Auth" token. Bryce needs to locate its Client ID/Secret (Cloudflare
-   only shows a token's secret once, at creation — check
-   `tools/deja-bridge/.env.local` first, since that script already uses
-   this same token).
+   `CF-Access-Client-Secret`), using the existing "Hermes_Cloudflare
+   Auth" token.
 2. **The new shared secret** (`X-Zapier-Secret`, same value as
-   `ZAPIER_WEBHOOK_SECRET`) — needs adding to this step too, now that the
-   Worker checks for it.
+   `ZAPIER_WEBHOOK_SECRET`).
+
+Verified with a real test run of the step: it passed Cloudflare Access,
+passed the new secret check, and reached Hermes' actual reservation
+parser — which correctly rejected the loaded sample (a generic Gmail
+forwarding-confirmation email, not a real reservation) with an explicit
+error and no side effects, so there was nothing to clean up. This
+confirms the full auth chain is sound; only the next real Sahara
+reservation email will fully close the loop (see
+[[verify-scheduling-with-real-bookings]]).
+
+**Note on creating the secret**: the very first `wrangler secrets-store
+secret create` attempt reported success (with a real-looking secret ID)
+but never actually persisted — `secret list` never showed it, and a
+later `secret update` against that ID failed with `secret_not_found`.
+This "open beta" wrangler command can apparently report success on a
+create that silently doesn't take. Always confirm a newly created secret
+actually shows up in `secret list` before relying on it existing.
+
+## Still open
+
+`/webhooks/reservation`'s calling Zap hasn't been identified or audited
+yet — it may have the same missing-headers gap the Turno Zap had.
 
 Same two headers will be needed on `/webhooks/reservation`'s calling Zap
 (not yet identified/audited this session) and on whatever eventually
