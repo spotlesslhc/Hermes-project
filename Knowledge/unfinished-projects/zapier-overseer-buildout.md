@@ -3,7 +3,7 @@ title: Zapier Overseer buildout
 tags: [zapier-overseer, zapier]
 started: 2026-09-22
 updated: 2026-09-26
-status: Invoicing Zap Path E fixed (v5); calendar Zap's cancellation handling fixed (v16); Path G, field mappings and access design still open
+status: Invoicing Zap Paths E and G fixed (v6); calendar Zap's cancellation handling fixed (v16); stale field mappings and access design still open
 ---
 
 # Zapier Overseer buildout
@@ -46,21 +46,19 @@ Full current state of both Zaps is in [[zapier-automations]]. Summary:
 - Editing live Zapier code needs Bryce approving each edit in an
   approval-gated session — full-auto mode blocks it. See
   [[2026-09-25-zapier-code-edit-permission-block]].
+- **Path G fixed and verified live (v6, 2026-09-26)** — had Path E's
+  original mechanical bugs, plus a structural one of its own (searched
+  for the old invoice by a `code` field that no invoice ever actually
+  stores). Full writeup in
+  [[decisions/2026-09-26-invoicing-zap-path-g-bugs]]. A throwaway test
+  draft invoice (#469, "1795 Palo Verde Boulevard South", 2026-08-16)
+  from verifying this is still sitting in Wave and needs deleting.
 
 ## What's left
 
-1. **Fix Path G** (fires on `reservation.changed`). Read-only check
-   confirmed it has Path E's original bugs: endpoint
-   `https://gql.waveapps.com/` (line 14) and a top-level
-   `invoices(first: 100, filter: {description: "{code}"})` query (line 24).
-   It hardcodes `customer_id = '97496415'` and
-   `business_id = '022c8b78-3bbd-41cc-88e4-d7dfdce5632c'` (lines 11–12);
-   read its Step 3 (invoice creation, ~line 72) in full before changing
-   anything. Apply the Wave gotchas listed in [[zapier-automations]], then
-   test on a throwaway draft invoice, same as Path E.
-2. **Fix the stale Hospitable field-mapping warnings** on Paths A, B
+1. **Fix the stale Hospitable field-mapping warnings** on Paths A, B
    and C.
-3. **Design "full view and edit" access for Deja** (Zapier's own API, a
+2. **Design "full view and edit" access for Deja** (Zapier's own API, a
    stored key, and real thought about blast radius, since the account
    already holds a cleartext Wave token — see
    [[2026-09-22-zapier-wave-token-cleartext]]) before wiring anything
@@ -68,5 +66,4 @@ Full current state of both Zaps is in [[zapier-automations]]. Summary:
 
 ## Blocked on
 
-Nothing — pick up any item whenever. Item 1 needs a session where Bryce
-can approve live Zapier edits.
+Nothing — pick up any item whenever.

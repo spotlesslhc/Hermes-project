@@ -94,7 +94,7 @@ for next time is in
    after the calendar change, or the step ends up with an empty
    required field.
 
-### 2. "Hospitable Reservations to Wave Invoices" (now v5, active)
+### 2. "Hospitable Reservations to Wave Invoices" (now v6, active)
 
 Triggered by a Catch Hook, fed by Zap #1's POST step. This one is much
 bigger than it first looked — **7 paths total (A, B, C, D, E, F, G)**,
@@ -138,10 +138,21 @@ distinction matters):
   lives in the Zap itself; the full debugging trail is in git history for
   `Knowledge/unfinished-projects/zapier-overseer-buildout.md`.
 - **Path G**: fires on `Action` exactly matching "reservation.changed" →
-  a second Code-by-Zapier Python step, using a hardcoded Wave
-  `customer_id` (not a name lookup) — presumably updates rather than
-  deletes. Not fully read line-by-line; worth a closer pass if this
-  becomes load-bearing.
+  a second Code-by-Zapier Python step that finds the reservation's
+  existing invoice, deletes it, and recreates it with the updated
+  checkout date/property. **Never worked until v6 (2026-09-26)** — see
+  [[decisions/2026-09-26-invoicing-zap-path-g-bugs]]: it had the exact
+  same endpoint/query/mutation-field bugs Path E had before its own fix,
+  plus a structural one of its own — it searched for the old invoice by
+  matching the reservation's `code` against the invoice description, but
+  no invoice this account creates ever has that code written anywhere on
+  it, so the search could never have found anything even with the
+  mechanical bugs fixed. Fixed by switching to Path E's already-verified
+  matching approach (customer + DRAFT status + invoice date + property
+  name in an item description) and replacing the hardcoded business/
+  customer/product IDs with name-based lookups. Verified end to end
+  against the real Wave API (create-when-missing, then find+delete+
+  recreate on a second run).
 
 **Wave GraphQL gotchas learned fixing Path E** (apply to Path G and any
 new Wave code — `src/index.js`'s working queries are the reliable
