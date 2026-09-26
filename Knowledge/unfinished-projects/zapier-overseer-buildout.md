@@ -2,8 +2,8 @@
 title: Zapier Overseer buildout
 tags: [zapier-overseer, zapier]
 started: 2026-09-22
-updated: 2026-09-25
-status: Path E fixed (v5); Path G, field mappings and access design still open
+updated: 2026-09-26
+status: Invoicing Zap Path E fixed (v5); calendar Zap's cancellation handling fixed (v16); Path G, field mappings and access design still open
 ---
 
 # Zapier Overseer buildout
@@ -28,6 +28,21 @@ Full current state of both Zaps is in [[zapier-automations]]. Summary:
   a Wave customer on a miss (v4); **Path E invoice deletion fixed and
   verified live (v5)** — it had never worked before.
 - Unused "1328 Piper Dr" Zap moved to Zapier's trash.
+- **Calendar Zap's cancellation handling fixed end to end (v16,
+  2026-09-26)** — two real bugs and a wrong-calendar issue, all found
+  chasing down one real Hospitable cancellation. Full writeup in
+  [[decisions/2026-09-26-calendar-zap-cancellation-bugs]]:
+  1. Find Events could never match an event (exclusive time-bound
+     compared against an exact-match timestamp) — fixed with a Formatter
+     step, verified against the real failed run.
+  2. Three of four create-paths had no status check at all, so a
+     cancellation immediately got a fresh duplicate event created right
+     after the old one was deleted — fixed by adding the same status
+     guard QueensBay's path already had.
+  3. All 8 Google Calendar steps in this Zap (4 create-paths, 2
+     cancellation Find Events, 2 cancellation Delete Event) pointed at a
+     leftover "Test Auto Cleanings" calendar instead of the real "Cleans"
+     calendar — switched.
 - Editing live Zapier code needs Bryce approving each edit in an
   approval-gated session — full-auto mode blocks it. See
   [[2026-09-25-zapier-code-edit-permission-block]].

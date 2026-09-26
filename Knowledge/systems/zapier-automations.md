@@ -1,7 +1,7 @@
 ---
 title: Zapier automations — what's actually there
 tags: [systems, zapier, zapier-overseer, bookkeeper, scheduler]
-updated: 2026-09-22
+updated: 2026-09-26
 ---
 
 # Zapier automations — what's actually there
@@ -23,7 +23,7 @@ path or step doesn't exist.
 
 ## The Zaps (2 remaining; a third was deleted, see below)
 
-### 1. "Add Hostaway reservations to Google Calendar" (v13, active)
+### 1. "Add Hostaway reservations to Google Calendar" (v16, active)
 
 Despite the name, **its trigger is a Hospitable webhook**, not a native
 Hostaway trigger — Bryce confirmed Hostaway itself isn't actually used;
@@ -36,13 +36,63 @@ the name is just stale. Flow:
 3. Split into paths by property:
    - 206 Columbine Drive → create calendar event
    - 1795 Palo Verde Boulevard South → create calendar event
-   - Path E / "If reservation.changed" → **Find Events + Delete Event**
-     (cancellation/change handling for the calendar side)
+   - Path E ("If [property] AND status = cancelled") → **Find Events +
+     Delete Event**
+   - "If reservation.changed" → a Formatter (Date/Time) step, then
+     **Find Events + Delete Event** — the other cancellation-handling
+     path, for webhooks where Hospitable's `Action` is
+     `reservation.changed` rather than a plain `status: cancelled`
    - A nested split: QueensBay Unit #324 → create event, and an
      **"Other properties (fallback)"** branch → create event for anything
      not explicitly matched
 
 Reasonably complete — real fallback and cancellation-handling logic.
+Both cancellation paths, and all four create-paths, now correctly guard
+against re-processing a cancelled reservation — see the two real bugs
+fixed 2026-09-26 below.
+
+**Two real bugs found and fixed 2026-09-26** (root cause + what to watch
+for next time is in
+[[decisions/2026-09-26-calendar-zap-cancellation-bugs]]):
+
+1. **Find Events never actually matched anything** (v13→v15). Both
+   cancellation paths' `Start Time Before` field was set to the
+   reservation's own `Check Out` timestamp, but Zapier's `Start Time
+   Before` bound is *exclusive* and a cleaning event's start time always
+   *equals* checkout exactly — so the search silently matched zero events
+   on every single run, for every property, since this Zap existed. The
+   Delete Event step then always failed with `Required field "Event"
+   (eventid) is missing`. Fixed by adding a Formatter (Date/Time,
+   Add/Subtract Time) step that computes `Check Out + 1 hour` and using
+   *that* as `Start Time Before` instead. A plain text-append hack
+   (`+1 hour` typed next to the Check Out pill) does **not** work — Zapier
+   doesn't run relative-offset text through its date parser when a pill
+   already resolves to an explicit ISO timestamp; it has to be a real
+   Formatter step.
+2. **Cancelled reservations still created a fresh "confirmed" event**
+   (v15→v16). The 206 Columbine, 1795 Palo Verde, and "Other properties
+   (fallback)" create-paths only checked the property name — no status
+   condition at all — so they ran on *every* webhook for that property,
+   cancellations included. QueensBay's path already had `AND Status does
+   not exactly match cancelled` (matching the invoicing Zap's own
+   Paths A/B/C pattern below); the other three didn't. Fixed by adding
+   the same condition to all three. This is very likely what produced the
+   duplicate "Cleaning - [property]" events found and deleted on
+   2026-09-26 — every past cancellation for those three properties
+   probably re-created the event moments after (or before) the
+   since-fixed Find+Delete step failed to remove it.
+3. **All Google Calendar steps pointed at the wrong calendar.** Both
+   cancellation paths and all four create-paths had their `Calendar`
+   field set to "Test Auto Cleanings" (a leftover dev/testing calendar,
+   ID `7d08e24f...@group.calendar.google.com`) instead of the real
+   "Cleans" calendar Bryce actually uses (`spotlesscleaninglhc@gmail.com`).
+   Switched all 8 steps to Cleans in v16. Watch for this: changing a
+   step's Calendar field in Zapier's UI silently clears any "Event"
+   field on a downstream Delete Event step that was mapped by picking a
+   specific event from that calendar's list — it has to be switched to
+   "Custom value" and re-mapped to the Find Events step's `ID` field
+   after the calendar change, or the step ends up with an empty
+   required field.
 
 ### 2. "Hospitable Reservations to Wave Invoices" (now v5, active)
 
