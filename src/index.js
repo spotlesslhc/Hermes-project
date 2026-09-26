@@ -844,6 +844,36 @@ async function addToPaymentIndex(env, id) {
 // paid-through forward to `date` regardless of whether `amount` matches
 // the computed owed total -- Bryce might round, or pay a different amount
 // on purpose -- but the mismatch (if any) is reported back so he notices.
+// Both found via live schema introspection (2026-09-25) -- Wave's public API
+// has no way to look up an account by name, only by paginating the full
+// account list, so these are hardcoded rather than looked up on every call.
+// If Bryce ever renames these Wave accounts, this needs updating by hand.
+const WAVE_CASH_ON_HAND_ACCOUNT_ID = "QWNjb3VudDoyMjczNjg1NTgwNzE1OTUwNTU3O0J1c2luZXNzOjAyMmM4Yjc4LTNiYmQtNDFjYy04OGU0LWQ3ZGZkY2U1NjMyYw==";
+const WAVE_PAYROLL_SALARY_ACCOUNT_ID = "QWNjb3VudDoyMjczNjg1NTgyNjAzMzg3NDA5O0J1c2luZXNzOjAyMmM4Yjc4LTNiYmQtNDFjYy04OGU0LWQ3ZGZkY2U1NjMyYw==";
+
+// Mirrors the exact format Bryce used for his own manual entries (see
+// Knowledge/playbooks/payroll-wave-expense.md): a withdrawal from Cash on
+// Hand, categorized to Payroll - Salary & Wages, description "Name- job
+// job job". externalId must be unique per Wave transaction -- the payment
+// record's own id is used, so a retried call can't double-post.
+async function createWavePayrollExpense(env, { businessId, externalId, date, description, amount }) {
+  const data = await waveGraphQL(env, `mutation($input: MoneyTransactionCreateInput!) {
+    moneyTransactionCreate(input: $input) { didSucceed inputErrors { message code path } transaction { id } }
+  }`, {
+    input: {
+      businessId,
+      externalId,
+      date,
+      description,
+      anchor: { accountId: WAVE_CASH_ON_HAND_ACCOUNT_ID, amount, direction: "WITHDRAWAL" },
+      lineItems: [{ accountId: WAVE_PAYROLL_SALARY_ACCOUNT_ID, amount, balance: "INCREASE" }]
+    }
+  });
+  const result = data.moneyTransactionCreate;
+  if (!result.didSucceed) throw new Error(`Wave transaction creation failed: ${JSON.stringify(result.inputErrors)}`);
+  return result.transaction.id;
+}
+
 async function recordCleanerPayment(env, { cleaner_name, amount, date }) {
   const cleanerKey = cleaner_name.trim().toLowerCase();
   const before = await getCleanerPayrollSummary(env, cleanerKey);
@@ -867,7 +897,24 @@ async function recordCleanerPayment(env, { cleaner_name, amount, date }) {
     : "";
   await appendLog(env, { who: "Bookkeeper", what: `Recorded $${amount.toFixed(2)} paid to ${cleaner_name} through ${paidOn}${mismatch}` });
 
-  return { ...record, previouslyOwed: before.owed, mismatch: mismatch !== "" };
+  const cleanerLabel = cleanerKey.charAt(0).toUpperCase() + cleanerKey.slice(1);
+  let waveTransactionId = null;
+  try {
+    const businessId = await getWaveBusinessId(env);
+    waveTransactionId = await createWavePayrollExpense(env, {
+      businessId,
+      externalId: record.id,
+      date: paidOn,
+      description: `${cleanerLabel}- ${before.paymentNote}`,
+      amount
+    });
+    await env.HERMES_KV.put(`payroll_wave_tx:${record.id}`, waveTransactionId);
+    await appendLog(env, { who: "Bookkeeper", what: `Logged $${amount.toFixed(2)} to ${cleanerLabel} as a Wave expense (Cash on Hand -> Payroll - Salary & Wages)` });
+  } catch (err) {
+    await appendLog(env, { who: "Bookkeeper", what: `Couldn't log ${cleanerLabel}'s $${amount.toFixed(2)} payment in Wave: ${err.message}. Payroll tracking is still correct -- this just needs a manual Wave entry.` });
+  }
+
+  return { ...record, previouslyOwed: before.owed, mismatch: mismatch !== "", waveTransactionId };
 }
 
 // Runs weekly (see the "crons" trigger in wrangler.jsonc). Doesn't send or
@@ -1854,32 +1901,17 @@ export default {
         return json({ connected: false, error: err.message }, { status: 502 });
       }
     }
-    if (pathname === "/api/debug/wave-tx-schema" && method === "GET") {
+    if (pathname === "/api/debug/wave-tx-test" && method === "POST") {
       try {
-        const enumQuery = `query($t: String!) {
-          __type(name: $t) { name enumValues { name } }
-        }`;
-        const mutationQuery = `query($t: String!) {
-          __type(name: $t) {
-            fields(includeDeprecated: true) {
-              name
-              args { name type { name kind ofType { name kind } } }
-            }
-          }
-        }`;
-        const [direction, balance, mutations] = await Promise.all([
-          waveGraphQL(env, enumQuery, { t: "TransactionDirection" }),
-          waveGraphQL(env, enumQuery, { t: "BalanceType" }),
-          waveGraphQL(env, mutationQuery, { t: "Mutation" })
-        ]);
-        const moneyTxFields = mutations.__type.fields.filter((f) => /moneyTransaction/i.test(f.name));
-        const returnTypeQuery = `query($t: String!) { __type(name: $t) { name fields { name type { name kind ofType { name kind } } } } }`;
-        const [createReturn, deleteInput, deleteReturn] = await Promise.all([
-          waveGraphQL(env, returnTypeQuery, { t: "MoneyTransactionCreateOutput" }),
-          waveGraphQL(env, enumQuery.replace("enumValues { name }", "inputFields { name type { name kind ofType { name kind } } }"), { t: "MoneyTransactionDeleteInput" }),
-          waveGraphQL(env, returnTypeQuery, { t: "MoneyTransactionDeleteOutput" })
-        ]);
-        return json({ direction, balance, moneyTxFields, createReturn, deleteInput, deleteReturn });
+        const businessId = await getWaveBusinessId(env);
+        const txId = await createWavePayrollExpense(env, {
+          businessId,
+          externalId: `debug-test-${Date.now()}`,
+          date: toDateOnly(new Date()),
+          description: "TEST - DELETE ME - payroll automation schema test",
+          amount: 0.01
+        });
+        return json({ ok: true, transactionId: txId });
       } catch (err) {
         return json({ error: err.message }, { status: 502 });
       }
