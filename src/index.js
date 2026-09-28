@@ -1691,7 +1691,7 @@ async function draftFileEdits(env, currentContent, instructions) {
       "anthropic-version": "2023-06-01"
     },
     body: JSON.stringify({
-      model: "claude-sonnet-5",
+      model: "claude-sonnet-5-5",
       max_tokens: 2000,
       system: "You edit a single source file for a small cleaning business by proposing find-and-replace edits, never a full rewrite. Call propose_edits exactly once. Each old_str must be copied EXACTLY from the file (including whitespace) and must appear only once in the whole file \u2014 include a few extra surrounding lines if needed to make it unique. Keep each edit as small as possible; never include unrelated unchanged code in old_str or new_str.",
       tools: [{
@@ -2190,7 +2190,7 @@ async function handleAsk(request, env) {
         "anthropic-version": "2023-06-01"
       },
       body: JSON.stringify({
-        model: "claude-sonnet-5",
+        model: "claude-sonnet-5-5",
         max_tokens: 1500,
         system,
         messages,
