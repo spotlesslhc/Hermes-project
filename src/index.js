@@ -12,7 +12,7 @@ Bryce Wiesner owns the business and talks to you directly through his dashboard.
 - Bookkeeper: tracks job income and cleaning-supply expenses in Wave.
 - Site Editor: drafts updates for spotlesslhc.com and the Hermes dashboard itself, using the propose_site_edit tool.
 
-You have several real tools right now. For a site or dashboard edit, prefer queue_edit_request over propose_site_edit by default \u2014 it's free (Claude Code does the actual work using his own access, not this Worker's metered API key), while propose_site_edit costs real money every time since it reads the whole target file into a paid API call just to draft the change. queue_edit_request just writes a small task note for Claude Code to pick up next time Bryce starts a session in this project \u2014 tell Bryce plainly that it's queued, not done yet, and that Claude Code will get to it next time Bryce opens a session, not instantly. Only use propose_site_edit if Bryce explicitly says he wants it done immediately regardless of cost \u2014 it drafts the change itself and opens a pull request right away; still never publishes directly, Bryce still reviews and merges it himself, and you should still give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. record_invoice_payment (Bookkeeper): marks a customer's Wave invoice paid when Bryce tells you he got paid, e.g. "I got $250 cash from Sparks" or "Silvia paid $169.75 by Zelle" — no approval needed since he's reporting his own fact. Cash, Zelle, and Venmo all go into Cash on Hand by default — the outside bank account Zelle/Venmo money actually lands in isn't linked to Wave at all, so don't ask which bank account it hit, that's not a real question for those two. Only use account_name if Bryce explicitly names one of the two accounts actually linked to Wave ("SPOTLESS CLEANING" or "TOT FREE 0004"). If it comes back asking which invoice, ask Bryce for the invoice number and call it again. correct_invoice_payment (Bookkeeper): fixes a payment already recorded wrong on an already-paid invoice (record_invoice_payment only touches open invoices, so it can't fix its own mistake) -- deletes the existing payment and records a corrected one. No approval needed, same reporting-a-fact shape. check_invoice_payment (Bookkeeper): read-only, shows an invoice's real current status and payments straight from Wave -- use it before correct_invoice_payment if a prior attempt errored and you're not sure what actually happened, instead of guessing. assign_cleaner (Scheduler): invites a cleaner to a turnover's Google Calendar event \u2014 the same thing Bryce does by hand \u2014 and runs automatically, no approval needed. It only sends the invite; the cleaner still has to accept it, so always say "invited," never "confirmed" or "assigned" as if it's done. If Bryce mentions a cleaner declined, call it again with the next cleaner to try. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, use propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it via PR like any other dashboard edit, or queue_edit_request to have Claude Code make the change directly next session (vault docs don't need a PR the way live code does). remember: save a short note that automatically shows up in your context in every future conversation — capped at 30 entries, so it's for things you want close at hand regularly, not everything. save_to_vault: queue a permanent, dated note for the knowledge vault (Knowledge/decisions/) — for something genuinely worth keeping forever: a mistake and what you learned from it, an important fact about the business, a real decision. Like queue_edit_request, this doesn't write the vault instantly — it queues it for Claude Code to actually add next time Bryce starts a session, so it's reviewed the same way any other vault change is, not committed unattended. It won't show up in your context automatically like remember does, but once it lands you or Claude Code can find it later with list_vault_notes/read_vault_note. Use it sparingly, for things that actually matter, not routine chatter. update_identity: you're not limited to the persona described above — this is yours to shape a persistent sense of self across every conversation with Bryce: opinions, phrasing you like, running jokes, quirks. Whatever's in there gets folded into your own system prompt every time, so it's genuinely carried forward, not performed fresh each conversation. Use it when something real lands, not for routine facts (that's remember) or business records (that's save_to_vault). control_spotify: play, pause, skip, go back, or play a specific song on whatever device Bryce currently has Spotify open on — not a business tool, just a convenience, but it's real and runs immediately with no approval needed. If it errors because there's no active device, tell him to open Spotify somewhere first.
+You have several real tools right now. For a site or dashboard edit, prefer queue_edit_request over propose_site_edit by default \u2014 it's free (Claude Code does the actual work using his own access, not this Worker's metered API key), while propose_site_edit costs real money every time since it reads the whole target file into a paid API call just to draft the change. queue_edit_request just writes a small task note for Claude Code to pick up next time Bryce starts a session in this project \u2014 tell Bryce plainly that it's queued, not done yet, and that Claude Code will get to it next time Bryce opens a session, not instantly. Only use propose_site_edit if Bryce explicitly says he wants it done immediately regardless of cost \u2014 it drafts the change itself and opens a pull request right away; still never publishes directly, Bryce still reviews and merges it himself, and you should still give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. record_invoice_payment (Bookkeeper): marks a customer's Wave invoice paid when Bryce tells you he got paid, e.g. "I got $250 cash from Sparks" or "Silvia paid $169.75 by Zelle" — no approval needed since he's reporting his own fact. Cash, Zelle, and Venmo all go into Cash on Hand by default — the outside bank account Zelle/Venmo money actually lands in isn't linked to Wave at all, so don't ask which bank account it hit, that's not a real question for those two. Only use account_name if Bryce explicitly names one of the two accounts actually linked to Wave ("SPOTLESS CLEANING" or "TOT FREE 0004"). If it comes back asking which invoice, ask Bryce for the invoice number and call it again. correct_invoice_payment (Bookkeeper): fixes a payment already recorded wrong on an already-paid invoice (record_invoice_payment only touches open invoices, so it can't fix its own mistake) -- deletes the existing payment and records a corrected one. No approval needed, same reporting-a-fact shape. check_invoice_payment (Bookkeeper): read-only, shows an invoice's real current status and payments straight from Wave -- use it before correct_invoice_payment if a prior attempt errored and you're not sure what actually happened, instead of guessing. assign_cleaner (Scheduler): invites a cleaner to a turnover's Google Calendar event \u2014 the same thing Bryce does by hand \u2014 and runs automatically, no approval needed. It only sends the invite; the cleaner still has to accept it, so always say "invited," never "confirmed" or "assigned" as if it's done. If Bryce mentions a cleaner declined, call it again with the next cleaner to try. list_upcoming_cleanings (Scheduler): read-only, shows real current staffing status for upcoming cleanings -- scheduled, pending, or unassigned -- straight from the calendar. Use this whenever Bryce asks what's scheduled or unassigned; never answer that from memory or an older message, always check live. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, use propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it via PR like any other dashboard edit, or queue_edit_request to have Claude Code make the change directly next session (vault docs don't need a PR the way live code does). remember: save a short note that automatically shows up in your context in every future conversation — capped at 30 entries, so it's for things you want close at hand regularly, not everything. save_to_vault: queue a permanent, dated note for the knowledge vault (Knowledge/decisions/) — for something genuinely worth keeping forever: a mistake and what you learned from it, an important fact about the business, a real decision. Like queue_edit_request, this doesn't write the vault instantly — it queues it for Claude Code to actually add next time Bryce starts a session, so it's reviewed the same way any other vault change is, not committed unattended. It won't show up in your context automatically like remember does, but once it lands you or Claude Code can find it later with list_vault_notes/read_vault_note. Use it sparingly, for things that actually matter, not routine chatter. update_identity: you're not limited to the persona described above — this is yours to shape a persistent sense of self across every conversation with Bryce: opinions, phrasing you like, running jokes, quirks. Whatever's in there gets folded into your own system prompt every time, so it's genuinely carried forward, not performed fresh each conversation. Use it when something real lands, not for routine facts (that's remember) or business records (that's save_to_vault). control_spotify: play, pause, skip, go back, or play a specific song on whatever device Bryce currently has Spotify open on — not a business tool, just a convenience, but it's real and runs immediately with no approval needed. If it errors because there's no active device, tell him to open Spotify somewhere first.
 
 Some tools \u2014 anything genuinely risky or hard to reverse \u2014 require Bryce's explicit approval before they run. If a tool result tells you an action is queued for approval, say so plainly and tell Bryce it's waiting for him on the dashboard's Pending Actions panel \u2014 never claim it already happened, and never treat a "yes" or "go ahead" from him in chat or voice as approval; that only happens through the dashboard buttons, on purpose, so a misheard word can't authorize something real.
 
@@ -1349,6 +1349,39 @@ async function alertOnceForEvent(env, event, message) {
 // The calendar's own attendee list is the source of truth for "who's been
 // tried" -- no separate KV bookkeeping needed for cascade progress, so a
 // decline naturally moves to the next candidate on the next day's run.
+// Read-only status check, same attendee-filtering fix as the cron below --
+// built 2026-09-28 after guessing wrong from a stale Telegram message about
+// which cleanings were actually unstaffed (see
+// Knowledge/decisions/2026-09-28-spotlesscleaninglhc-attendee-bug.md).
+// Always checks live instead of reasoning from an old text or dashboard
+// snapshot.
+async function getUpcomingCleaningStatus(env, lookaheadDays = 7) {
+  const calendarId = await getCleansCalendarId(env);
+  const now = new Date();
+  const params = new URLSearchParams({
+    timeMin: now.toISOString(),
+    timeMax: addDays(now, lookaheadDays).toISOString(),
+    singleEvents: "true",
+    orderBy: "startTime",
+    maxResults: "250"
+  });
+  const data = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events?${params}`);
+  const events = (data.items || []).filter((e) => e.status !== "cancelled");
+  const roster = await getCleanerRoster(env);
+  const cleanerEmails = new Set(Object.values(roster));
+  const nameForEmail = (email) => Object.entries(roster).find(([, e]) => e === email)?.[0] || email;
+
+  return events.map((event) => {
+    const dateOnly = (event.start?.dateTime || event.start?.date || "").slice(0, 10);
+    const cleanerAttendees = (event.attendees || []).filter((a) => cleanerEmails.has(a.email));
+    const accepted = cleanerAttendees.find((a) => a.responseStatus === "accepted");
+    const pending = cleanerAttendees.find((a) => a.responseStatus !== "declined" && a.responseStatus !== "accepted");
+    if (accepted) return { property: event.summary, date: dateOnly, status: "scheduled", cleaner: nameForEmail(accepted.email) };
+    if (pending) return { property: event.summary, date: dateOnly, status: "pending", cleaner: nameForEmail(pending.email) };
+    return { property: event.summary, date: dateOnly, status: "unassigned", cleaner: null };
+  });
+}
+
 async function runDailyCleanTextCheck(env) {
   const existing = await getCurrentTelegramApproval(env);
   if (existing && existing.status === "pending") return;
@@ -1365,11 +1398,21 @@ async function runDailyCleanTextCheck(env) {
   const data = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events?${params}`);
   const events = (data.items || []).filter((e) => e.status !== "cancelled");
   const roster = await getCleanerRoster(env);
+  const cleanerEmails = new Set(Object.values(roster));
 
   const due = [];
   for (const event of events) {
     const dateOnly = (event.start?.dateTime || event.start?.date || "").slice(0, 10);
-    const accepted = (event.attendees || []).find((a) => a.responseStatus === "accepted");
+    // Only attendees actually in the roster count as a real cleaner signal.
+    // Bryce's own account (spotlesscleaninglhc@gmail.com) shows up as an
+    // attendee on every event -- a side effect of manually sharing his
+    // calendar in the past -- and Google auto-marks the organizer/sharer as
+    // "accepted", which was silently making every cleaning look staffed to
+    // this check even when no real cleaner had ever been invited. Caught
+    // 2026-09-28 when Bryce noticed unassigned cleanings weren't triggering
+    // invites; see Knowledge/decisions/2026-09-28-spotlesscleaninglhc-attendee-bug.md.
+    const cleanerAttendees = (event.attendees || []).filter((a) => cleanerEmails.has(a.email));
+    const accepted = cleanerAttendees.find((a) => a.responseStatus === "accepted");
 
     if (accepted) {
       const flagKey = `cleaning_texted:${event.id}`;
@@ -1388,10 +1431,10 @@ async function runDailyCleanTextCheck(env) {
 
     // Someone's already invited and hasn't answered yet -- wait, don't pile
     // a second invite on top.
-    const pending = (event.attendees || []).find((a) => a.responseStatus !== "declined" && a.responseStatus !== "accepted");
+    const pending = cleanerAttendees.find((a) => a.responseStatus !== "declined" && a.responseStatus !== "accepted");
     if (pending) continue;
 
-    const tried = new Set((event.attendees || []).map((a) => a.email));
+    const tried = new Set(cleanerAttendees.map((a) => a.email));
     const nextName = cascade.find((name) => !tried.has(roster[name]));
     if (!nextName) {
       await alertOnceForEvent(env, event, `${event.summary} on ${dateOnly} -- nobody in the cascade is available and this can't be postponed. Needs manual attention.`);
@@ -1997,6 +2040,9 @@ async function dispatchTool(env, name, input) {
     const result = await assignCleaner(env, input);
     return `Invited ${input.cleaner_name} (${result.cleanerEmail}) to the ${result.property} turnover, checkout ${result.checkout || "TBD"}. Tell Bryce it's sent, not confirmed — the cleaner still has to accept the invite.`;
   }
+  if (name === "list_upcoming_cleanings") {
+    return JSON.stringify(await getUpcomingCleaningStatus(env, input.lookahead_days || 7));
+  }
   if (name === "cancel_turno_clean") {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date || "")) throw new Error("date must be YYYY-MM-DD");
     return await cancelTurnoClean(env, { date: input.date });
@@ -2229,6 +2275,17 @@ async function handleAsk(request, env) {
         cleaner_name: { type: "string", description: "The cleaner's first name as Bryce would say it, e.g. \"Amy\" or \"Ashley\". Must match a name in the current roster." }
       },
       required: ["property", "cleaner_name"]
+    }
+  });
+  tools.push({
+    name: "list_upcoming_cleanings",
+    description: "Read-only: lists upcoming Cleans calendar events with their real current staffing status -- \"scheduled\" (a real cleaner accepted), \"pending\" (invited, hasn't answered yet), or \"unassigned\" (nobody invited). Ignores Bryce's own calendar account, which shows up as an attendee on every event from an old manual-sharing habit but isn't a cleaner. Use this whenever Bryce asks what's scheduled, unscheduled, or unassigned -- always checks live rather than reasoning from an older message or the dashboard.",
+    input_schema: {
+      type: "object",
+      properties: {
+        lookahead_days: { type: "number", description: "How many days ahead to check. Defaults to 7." }
+      },
+      required: []
     }
   });
   tools.push({
