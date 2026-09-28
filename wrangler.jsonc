@@ -63,7 +63,30 @@
       "binding": "TELEGRAM_BOT_TOKEN",
       "store_id": "8f15d6429b5741f9ac32e05415413a65",
       "secret_name": "TELEGRAM_BOT_TOKEN"
+    },
+    {
+      "binding": "TELEGRAM_WEBHOOK_SECRET",
+      "store_id": "8f15d6429b5741f9ac32e05415413a65",
+      "secret_name": "TELEGRAM_WEBHOOK_SECRET"
     }
+  ],
+  // spotlesslhc.com is already a Cloudflare-managed zone (the website runs
+  // on Cloudflare Pages there -- see
+  // Knowledge/decisions/2026-09-20-spotlesslhc-website-github-migration.md),
+  // so this custom domain just needs Cloudflare to attach it to this Worker
+  // -- no DNS/nameserver migration involved. A dedicated subdomain instead
+  // of a path on spotlesslhc.com itself, so it can't collide with the
+  // Pages-hosted website's own routing.
+  //
+  // Why this exists: Cloudflare Access on the bare *.workers.dev address is
+  // whole-worker-or-nothing (no path field on that destination type), which
+  // is what made a real incoming Telegram webhook impossible before -- see
+  // Knowledge/decisions/2026-09-26-webhook-secret-auth.md. A custom domain
+  // uses the "Public Hostname" Access destination type instead, which does
+  // support path-scoped policies, so Bryce can exempt just /webhooks/* here
+  // while everything else on this hostname still requires Access.
+  "routes": [
+    { "pattern": "hermes.spotlesslhc.com", "custom_domain": true }
   ],
   "vars": {
     "HERMES_DEBUG_TOOLS": "false",
