@@ -12,7 +12,7 @@ Bryce Wiesner owns the business and talks to you directly through his dashboard.
 - Bookkeeper: tracks job income and cleaning-supply expenses in Wave.
 - Site Editor: drafts updates for spotlesslhc.com and the Hermes dashboard itself, using the propose_site_edit tool.
 
-You have seven real tools right now. For a site or dashboard edit, prefer queue_edit_request over propose_site_edit by default \u2014 it's free (Claude Code does the actual work using his own access, not this Worker's metered API key), while propose_site_edit costs real money every time since it reads the whole target file into a paid API call just to draft the change. queue_edit_request just writes a small task note for Claude Code to pick up next time Bryce starts a session in this project \u2014 tell Bryce plainly that it's queued, not done yet, and that Claude Code will get to it next time Bryce opens a session, not instantly. Only use propose_site_edit if Bryce explicitly says he wants it done immediately regardless of cost \u2014 it drafts the change itself and opens a pull request right away; still never publishes directly, Bryce still reviews and merges it himself, and you should still give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. assign_cleaner (Scheduler): invites a cleaner to a turnover's Google Calendar event \u2014 the same thing Bryce does by hand \u2014 and runs automatically, no approval needed. It only sends the invite; the cleaner still has to accept it, so always say "invited," never "confirmed" or "assigned" as if it's done. If Bryce mentions a cleaner declined, call it again with the next cleaner to try. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, use propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it via PR like any other dashboard edit, or queue_edit_request to have Claude Code make the change directly next session (vault docs don't need a PR the way live code does). control_spotify: play, pause, skip, go back, or play a specific song on whatever device Bryce currently has Spotify open on — not a business tool, just a convenience, but it's real and runs immediately with no approval needed. If it errors because there's no active device, tell him to open Spotify somewhere first.
+You have seven real tools right now. For a site or dashboard edit, prefer queue_edit_request over propose_site_edit by default \u2014 it's free (Claude Code does the actual work using his own access, not this Worker's metered API key), while propose_site_edit costs real money every time since it reads the whole target file into a paid API call just to draft the change. queue_edit_request just writes a small task note for Claude Code to pick up next time Bryce starts a session in this project \u2014 tell Bryce plainly that it's queued, not done yet, and that Claude Code will get to it next time Bryce opens a session, not instantly. Only use propose_site_edit if Bryce explicitly says he wants it done immediately regardless of cost \u2014 it drafts the change itself and opens a pull request right away; still never publishes directly, Bryce still reviews and merges it himself, and you should still give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. record_invoice_payment (Bookkeeper): marks a customer's Wave invoice paid when Bryce tells you he got paid in cash, e.g. "I got $250 cash from Sparks" — always goes into the Cash on Hand account, never a real bank account, no approval needed since he's reporting his own fact. If it comes back asking which invoice, ask Bryce for the invoice number and call it again. assign_cleaner (Scheduler): invites a cleaner to a turnover's Google Calendar event \u2014 the same thing Bryce does by hand \u2014 and runs automatically, no approval needed. It only sends the invite; the cleaner still has to accept it, so always say "invited," never "confirmed" or "assigned" as if it's done. If Bryce mentions a cleaner declined, call it again with the next cleaner to try. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, use propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it via PR like any other dashboard edit, or queue_edit_request to have Claude Code make the change directly next session (vault docs don't need a PR the way live code does). control_spotify: play, pause, skip, go back, or play a specific song on whatever device Bryce currently has Spotify open on — not a business tool, just a convenience, but it's real and runs immediately with no approval needed. If it errors because there's no active device, tell him to open Spotify somewhere first.
 
 Some tools \u2014 anything genuinely risky or hard to reverse \u2014 require Bryce's explicit approval before they run. If a tool result tells you an action is queued for approval, say so plainly and tell Bryce it's waiting for him on the dashboard's Pending Actions panel \u2014 never claim it already happened, and never treat a "yes" or "go ahead" from him in chat or voice as approval; that only happens through the dashboard buttons, on purpose, so a misheard word can't authorize something real.
 
@@ -572,6 +572,77 @@ async function deleteWaveInvoice(env, invoiceId) {
     invoiceDelete(input: $input) { didSucceed inputErrors { message } }
   }`, { input: { invoiceId } });
   if (!data.invoiceDelete.didSucceed) throw new Error(`Wave invoice delete failed: ${JSON.stringify(data.invoiceDelete.inputErrors)}`);
+}
+
+// ---- Recording customer payments (cash, reported by Bryce) ---------------
+//
+// Bryce wants to just tell Deja "I got $250 cash from Sparks" and have the
+// matching Wave invoice marked paid -- same "Bryce reporting his own facts,
+// no approval needed" shape as record_cleaner_payment. Confirmed directly
+// with Bryce (2026-09-28) and in Wave's own "Record a manual payment" UI:
+// every payment here goes to the "Cash on Hand" account specifically, never
+// "SPOTLESS CLEANING" or "TOT FREE 0004" (Bryce's two real bank accounts) --
+// reuses WAVE_CASH_ON_HAND_ACCOUNT_ID, already defined below for payroll.
+//
+// invoicePaymentCreate's exact field names are a best-effort guess from
+// public docs, not yet confirmed against Wave's live schema (unlike the
+// account IDs above, which were confirmed directly in Wave's own UI) --
+// the first real live test with Bryce watching is what actually proves or
+// fixes this, same as WAVE_CASH_ON_HAND_ACCOUNT_ID itself was originally.
+async function findOpenWaveInvoicesForCustomer(env, customerName) {
+  const businessId = await getWaveBusinessId(env);
+  const data = await waveGraphQL(env, `query($businessId: ID!) {
+    business(id: $businessId) {
+      invoices(page: 1, pageSize: 200) {
+        edges { node { id invoiceNumber status dueDate amountDue { value } customer { name } } }
+      }
+    }
+  }`, { businessId });
+  const edges = (data.business && data.business.invoices && data.business.invoices.edges) || [];
+  return edges
+    .map((e) => e.node)
+    .filter((inv) => (inv.customer?.name || "").trim().toLowerCase() === customerName.trim().toLowerCase())
+    .filter((inv) => inv.status !== "DRAFT" && inv.status !== "PAID");
+}
+
+async function recordWaveInvoicePayment(env, { invoiceId, amount, date }) {
+  const data = await waveGraphQL(env, `mutation($input: InvoicePaymentCreateInput!) {
+    invoicePaymentCreate(input: $input) { didSucceed inputErrors { message code path } payment { id } }
+  }`, {
+    input: { invoiceId, amount, paymentDate: date, accountId: WAVE_CASH_ON_HAND_ACCOUNT_ID }
+  });
+  const result = data.invoicePaymentCreate;
+  if (!result.didSucceed) throw new Error(`Wave payment recording failed: ${JSON.stringify(result.inputErrors)}`);
+  return result.payment.id;
+}
+
+// Picks which open invoice a reported payment belongs to: the one open
+// invoice if there's only one, an explicit invoice_number if Bryce gave
+// one, or the one whose amountDue matches -- otherwise this refuses to
+// guess and lists the candidates so Bryce can specify.
+async function recordCustomerInvoicePayment(env, { customer_name, amount, date, invoice_number }) {
+  const openInvoices = await findOpenWaveInvoicesForCustomer(env, customer_name);
+  if (!openInvoices.length) throw new Error(`No open (unpaid, non-draft) invoices found for "${customer_name}".`);
+
+  let target;
+  if (invoice_number) {
+    target = openInvoices.find((inv) => String(inv.invoiceNumber) === String(invoice_number));
+    if (!target) throw new Error(`No open invoice #${invoice_number} found for ${customer_name}.`);
+  } else if (openInvoices.length === 1) {
+    target = openInvoices[0];
+  } else {
+    const matches = openInvoices.filter((inv) => Math.abs(parseFloat(inv.amountDue.value) - amount) < 0.01);
+    if (matches.length !== 1) {
+      const list = openInvoices.map((inv) => `#${inv.invoiceNumber} ($${inv.amountDue.value}, due ${inv.dueDate})`).join(", ");
+      throw new Error(`${customer_name} has multiple open invoices and $${amount} doesn't clearly match just one: ${list}. Ask Bryce which invoice number this covers.`);
+    }
+    target = matches[0];
+  }
+
+  const paidOn = date || toDateOnly(new Date());
+  await recordWaveInvoicePayment(env, { invoiceId: target.id, amount, date: paidOn });
+  await appendLog(env, { who: "Bookkeeper", what: `Recorded $${amount.toFixed(2)} cash payment from ${customer_name} against invoice #${target.invoiceNumber}` });
+  return { invoiceNumber: target.invoiceNumber, amount, date: paidOn };
 }
 
 const TURNO_WAVE_CUSTOMER_NAME = "Sparks";
@@ -1732,6 +1803,11 @@ async function dispatchTool(env, name, input) {
     const mismatchNote = record.mismatch ? ` Heads up: the amount computed from completed jobs was $${record.previouslyOwed.toFixed(2)}, not $${input.amount.toFixed(2)} -- tell Bryce this in case it wasn't intentional.` : "";
     return `Recorded $${input.amount.toFixed(2)} paid to ${input.cleaner_name} through ${record.date}.${mismatchNote}`;
   }
+  if (name === "record_invoice_payment") {
+    if (typeof input.amount !== "number" || input.amount <= 0) throw new Error("amount must be a positive number");
+    const record = await recordCustomerInvoicePayment(env, input);
+    return `Recorded $${record.amount.toFixed(2)} paid on invoice #${record.invoiceNumber} (${input.customer_name}), dated ${record.date}, into Cash on Hand.`;
+  }
   if (name === "list_vault_notes") {
     const files = await listVaultNotes(env);
     return files.length ? files.join("\n") : "No notes found in Knowledge/.";
@@ -1901,6 +1977,20 @@ async function handleAsk(request, env) {
         date: { type: "string", description: "The date paid, as YYYY-MM-DD. Defaults to today if not given." }
       },
       required: ["cleaner_name", "amount"]
+    }
+  });
+  tools.push({
+    name: "record_invoice_payment",
+    description: "Record that a customer already paid one of their invoices in cash -- this marks the matching Wave invoice paid (into the Cash on Hand account, never a real bank account) and does NOT move any money itself. Use when Bryce tells you he got paid in cash, e.g. \"I got $250 cash from Sparks\". No approval needed, since Bryce is reporting his own fact. If the customer has more than one open invoice and the amount doesn't clearly match just one, this will fail with a list of their open invoices -- ask Bryce which invoice number it covers and call again with invoice_number set.",
+    input_schema: {
+      type: "object",
+      properties: {
+        customer_name: { type: "string", description: "The Wave customer name exactly as Bryce would say it, e.g. \"Sparks\" or \"Mommy\"." },
+        amount: { type: "number", description: "The dollar amount actually received." },
+        date: { type: "string", description: "The date paid, as YYYY-MM-DD. Defaults to today if not given." },
+        invoice_number: { type: "string", description: "The specific invoice number this payment covers, only needed if the customer has multiple open invoices and the amount alone doesn't disambiguate." }
+      },
+      required: ["customer_name", "amount"]
     }
   });
   tools.push({
