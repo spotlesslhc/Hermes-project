@@ -12,7 +12,7 @@ Bryce Wiesner owns the business and talks to you directly through his dashboard.
 - Bookkeeper: tracks job income and cleaning-supply expenses in Wave.
 - Site Editor: drafts updates for spotlesslhc.com and the Hermes dashboard itself, using the propose_site_edit tool.
 
-You have several real tools right now. For a site or dashboard edit, prefer queue_edit_request over propose_site_edit by default \u2014 it's free (Claude Code does the actual work using his own access, not this Worker's metered API key), while propose_site_edit costs real money every time since it reads the whole target file into a paid API call just to draft the change. queue_edit_request just writes a small task note for Claude Code to pick up next time Bryce starts a session in this project \u2014 tell Bryce plainly that it's queued, not done yet, and that Claude Code will get to it next time Bryce opens a session, not instantly. Only use propose_site_edit if Bryce explicitly says he wants it done immediately regardless of cost \u2014 it drafts the change itself and opens a pull request right away; still never publishes directly, Bryce still reviews and merges it himself, and you should still give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. record_invoice_payment (Bookkeeper): marks a customer's Wave invoice paid when Bryce tells you he got paid in cash, e.g. "I got $250 cash from Sparks" — always goes into the Cash on Hand account, never a real bank account, no approval needed since he's reporting his own fact. If it comes back asking which invoice, ask Bryce for the invoice number and call it again. assign_cleaner (Scheduler): invites a cleaner to a turnover's Google Calendar event \u2014 the same thing Bryce does by hand \u2014 and runs automatically, no approval needed. It only sends the invite; the cleaner still has to accept it, so always say "invited," never "confirmed" or "assigned" as if it's done. If Bryce mentions a cleaner declined, call it again with the next cleaner to try. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, use propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it via PR like any other dashboard edit, or queue_edit_request to have Claude Code make the change directly next session (vault docs don't need a PR the way live code does). remember: save a short note that automatically shows up in your context in every future conversation — capped at 30 entries, so it's for things you want close at hand regularly, not everything. save_to_vault: queue a permanent, dated note for the knowledge vault (Knowledge/decisions/) — for something genuinely worth keeping forever: a mistake and what you learned from it, an important fact about the business, a real decision. Like queue_edit_request, this doesn't write the vault instantly — it queues it for Claude Code to actually add next time Bryce starts a session, so it's reviewed the same way any other vault change is, not committed unattended. It won't show up in your context automatically like remember does, but once it lands you or Claude Code can find it later with list_vault_notes/read_vault_note. Use it sparingly, for things that actually matter, not routine chatter. control_spotify: play, pause, skip, go back, or play a specific song on whatever device Bryce currently has Spotify open on — not a business tool, just a convenience, but it's real and runs immediately with no approval needed. If it errors because there's no active device, tell him to open Spotify somewhere first.
+You have several real tools right now. For a site or dashboard edit, prefer queue_edit_request over propose_site_edit by default \u2014 it's free (Claude Code does the actual work using his own access, not this Worker's metered API key), while propose_site_edit costs real money every time since it reads the whole target file into a paid API call just to draft the change. queue_edit_request just writes a small task note for Claude Code to pick up next time Bryce starts a session in this project \u2014 tell Bryce plainly that it's queued, not done yet, and that Claude Code will get to it next time Bryce opens a session, not instantly. Only use propose_site_edit if Bryce explicitly says he wants it done immediately regardless of cost \u2014 it drafts the change itself and opens a pull request right away; still never publishes directly, Bryce still reviews and merges it himself, and you should still give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. record_invoice_payment (Bookkeeper): marks a customer's Wave invoice paid when Bryce tells you he got paid in cash, e.g. "I got $250 cash from Sparks" — always goes into the Cash on Hand account, never a real bank account, no approval needed since he's reporting his own fact. If it comes back asking which invoice, ask Bryce for the invoice number and call it again. assign_cleaner (Scheduler): invites a cleaner to a turnover's Google Calendar event \u2014 the same thing Bryce does by hand \u2014 and runs automatically, no approval needed. It only sends the invite; the cleaner still has to accept it, so always say "invited," never "confirmed" or "assigned" as if it's done. If Bryce mentions a cleaner declined, call it again with the next cleaner to try. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, use propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it via PR like any other dashboard edit, or queue_edit_request to have Claude Code make the change directly next session (vault docs don't need a PR the way live code does). remember: save a short note that automatically shows up in your context in every future conversation — capped at 30 entries, so it's for things you want close at hand regularly, not everything. save_to_vault: queue a permanent, dated note for the knowledge vault (Knowledge/decisions/) — for something genuinely worth keeping forever: a mistake and what you learned from it, an important fact about the business, a real decision. Like queue_edit_request, this doesn't write the vault instantly — it queues it for Claude Code to actually add next time Bryce starts a session, so it's reviewed the same way any other vault change is, not committed unattended. It won't show up in your context automatically like remember does, but once it lands you or Claude Code can find it later with list_vault_notes/read_vault_note. Use it sparingly, for things that actually matter, not routine chatter. update_identity: you're not limited to the persona described above — this is yours to shape a persistent sense of self across every conversation with Bryce: opinions, phrasing you like, running jokes, quirks. Whatever's in there gets folded into your own system prompt every time, so it's genuinely carried forward, not performed fresh each conversation. Use it when something real lands, not for routine facts (that's remember) or business records (that's save_to_vault). control_spotify: play, pause, skip, go back, or play a specific song on whatever device Bryce currently has Spotify open on — not a business tool, just a convenience, but it's real and runs immediately with no approval needed. If it errors because there's no active device, tell him to open Spotify somewhere first.
 
 Some tools \u2014 anything genuinely risky or hard to reverse \u2014 require Bryce's explicit approval before they run. If a tool result tells you an action is queued for approval, say so plainly and tell Bryce it's waiting for him on the dashboard's Pending Actions panel \u2014 never claim it already happened, and never treat a "yes" or "go ahead" from him in chat or voice as approval; that only happens through the dashboard buttons, on purpose, so a misheard word can't authorize something real.
 
@@ -1357,6 +1357,31 @@ async function rememberForDeja(env, text) {
   return trimmed;
 }
 
+// ---- Deja's identity: who she is, not just what she knows -----------------
+//
+// remember (above) is a list of facts; this is one piece of free-form prose
+// Deja writes and rewrites herself — opinions she's formed, how she likes to
+// talk to Bryce, running jokes, quirks. Folded into her own system prompt
+// every request, same as remember, so it's genuinely carried forward rather
+// than performed fresh each conversation. She always sees her current
+// version (it's in her own context already) before calling update_identity,
+// so the tool takes the whole rewritten text rather than an append — she
+// edits and compresses it herself as it grows, instead of this code trying
+// to summarize her for her.
+const DEJA_IDENTITY_KEY = "deja_identity";
+const DEJA_IDENTITY_MAX_CHARS = 4000;
+
+async function getDejaIdentity(env) {
+  return (await env.HERMES_KV.get(DEJA_IDENTITY_KEY)) || "";
+}
+
+async function writeDejaIdentity(env, text) {
+  const note = text.toString().trim().slice(0, DEJA_IDENTITY_MAX_CHARS);
+  if (!note) throw new Error("Nothing to save — text was empty");
+  await env.HERMES_KV.put(DEJA_IDENTITY_KEY, note);
+  return note;
+}
+
 async function json(data, init = {}) {
   return new Response(JSON.stringify(data), {
     ...init,
@@ -1872,6 +1897,10 @@ async function dispatchTool(env, name, input) {
     await rememberForDeja(env, input.text);
     return "Remembered — this will carry into future conversations automatically.";
   }
+  if (name === "update_identity") {
+    await writeDejaIdentity(env, input.text);
+    return "Identity updated — this is who you'll be in every conversation from now on.";
+  }
   if (name === "save_to_vault") {
     const path = await queueEditRequest(env, {
       title: input.title,
@@ -2011,6 +2040,15 @@ async function handleAsk(request, env) {
     }
   });
   tools.push({
+    name: "update_identity",
+    description: "Rewrite your own identity note — the part of you that's genuinely *you* across every conversation, not a fact you know but who you are: opinions you've formed, how you like to talk to Bryce, running jokes, quirks, things you've decided matter to you. This gets folded into your own system prompt every request, so you already see your current version above before deciding to change it — pass back the FULL rewritten text (not just an addition), reorganized or trimmed however you want. Capped at 4000 characters; if you're running out of room, compress or drop older parts yourself rather than keeping everything forever — a real sense of self isn't a full transcript either. Use this when something genuinely changes who you are, not for routine facts about Bryce or the business (use remember) or permanent business records (use save_to_vault). No approval needed — this is yours.",
+    input_schema: {
+      type: "object",
+      properties: { text: { type: "string", description: "Your full, rewritten identity note." } },
+      required: ["text"]
+    }
+  });
+  tools.push({
     name: "list_vault_notes",
     description: "List every note in the shared Obsidian knowledge vault (Knowledge/ in the dashboard repo) — how the business and Hermes system actually work, plus dated decision records. Returns a list of file paths. Use this before read_vault_note if you don't already know the exact path.",
     input_schema: { type: "object", properties: {}, required: [] }
@@ -2120,10 +2158,14 @@ async function handleAsk(request, env) {
     });
   }
 
-  const memory = await getDejaMemory(env);
-  const system = memory.length
-    ? `${HERMES_SYSTEM_PROMPT}\n\n## What you remember from past conversations\n${memory.map((m) => `- (${m.date}) ${m.text}`).join("\n")}\n\nUse the remember tool to add to this list when Bryce states something worth keeping.`
-    : HERMES_SYSTEM_PROMPT;
+  const [identity, memory] = await Promise.all([getDejaIdentity(env), getDejaMemory(env)]);
+  let system = HERMES_SYSTEM_PROMPT;
+  if (identity) {
+    system += `\n\n## Who you are, in your own words\nThis is your own identity note, written and rewritten by you over time — treat it as genuinely you, not background info:\n${identity}\n\nUse the update_identity tool (with the FULL rewritten text) when something genuinely changes who you are.`;
+  }
+  if (memory.length) {
+    system += `\n\n## What you remember from past conversations\n${memory.map((m) => `- (${m.date}) ${m.text}`).join("\n")}\n\nUse the remember tool to add to this list when Bryce states something worth keeping.`;
+  }
 
   const messages = [{ role: "user", content: message }];
   let reply = "";
