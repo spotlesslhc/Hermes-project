@@ -686,7 +686,7 @@ async function cancelTurnoClean(env, { reservationCode, date }) {
 }
 
 async function handleTurnoReservationWebhook(request, env) {
-  const authError = requireZapierWebhookSecret(request, env);
+  const authError = await requireZapierWebhookSecret(request, env);
   if (authError) return authError;
 
   let body;
@@ -2023,16 +2023,27 @@ function timingSafeEqual(a, b) {
   return mismatch === 0;
 }
 
-function requireZapierWebhookSecret(request, env) {
+// ZAPIER_WEBHOOK_SECRET is a secrets-store binding, not a plain string --
+// like every other one in this file (WAVE_API_TOKEN, GOOGLE_CALENDAR_
+// CLIENT_ID, TELEGRAM_BOT_TOKEN, etc.) it has to be resolved with .get()
+// first. Without that, this compared a real secret string against the
+// binding object itself, which timingSafeEqual's typeof check always
+// fails -- meaning every one of these three webhooks has been rejecting
+// every real caller with 401, Cloudflare Access or not, since the secret
+// check was added. Found 2026-09-27, fixed 2026-09-28 -- see
+// Knowledge/decisions/2026-09-28-zapier-webhook-secret-get-bug.md for how
+// to verify it live against a real Zapier test send.
+async function requireZapierWebhookSecret(request, env) {
   const providedSecret = request.headers.get("x-zapier-secret") || "";
-  if (!env.ZAPIER_WEBHOOK_SECRET || !timingSafeEqual(providedSecret, env.ZAPIER_WEBHOOK_SECRET)) {
+  const expectedSecret = await env.ZAPIER_WEBHOOK_SECRET.get();
+  if (!expectedSecret || !timingSafeEqual(providedSecret, expectedSecret)) {
     return json({ error: "Unauthorized" }, { status: 401 });
   }
   return null;
 }
 
 async function handleReservation(request, env) {
-  const authError = requireZapierWebhookSecret(request, env);
+  const authError = await requireZapierWebhookSecret(request, env);
   if (authError) return authError;
 
   let body;
@@ -2079,7 +2090,7 @@ async function handleReservation(request, env) {
 // this (plus the human-supervised browser sessions used elsewhere) is the
 // whole of Deja's "Zapier access."
 async function handleZapierStatusWebhook(request, env) {
-  const authError = requireZapierWebhookSecret(request, env);
+  const authError = await requireZapierWebhookSecret(request, env);
   if (authError) return authError;
 
   let body;
