@@ -584,11 +584,14 @@ async function deleteWaveInvoice(env, invoiceId) {
 // "SPOTLESS CLEANING" or "TOT FREE 0004" (Bryce's two real bank accounts) --
 // reuses WAVE_CASH_ON_HAND_ACCOUNT_ID, already defined below for payroll.
 //
-// invoicePaymentCreate's exact field names are a best-effort guess from
-// public docs, not yet confirmed against Wave's live schema (unlike the
-// account IDs above, which were confirmed directly in Wave's own UI) --
-// the first real live test with Bryce watching is what actually proves or
-// fixes this, same as WAVE_CASH_ON_HAND_ACCOUNT_ID itself was originally.
+// The real mutation is invoicePaymentCreateManual, not invoicePaymentCreate
+// -- confirmed against Wave's published schema
+// (developer.waveapps.com/hc/en-us/articles/360019968212-API-Reference)
+// after the first live attempt (recording $169.75 cash from Silvia,
+// 2026-09-28) failed with GRAPHQL_VALIDATION_FAILED. The guessed field
+// names were also off: it's paymentAccountId, not accountId, the output
+// field is invoicePayment (not payment), and paymentMethod is required
+// (InvoicePaymentMethod enum -- CASH here, matching what this tool is for).
 async function findOpenWaveInvoicesForCustomer(env, customerName) {
   const businessId = await getWaveBusinessId(env);
   const data = await waveGraphQL(env, `query($businessId: ID!) {
@@ -606,14 +609,21 @@ async function findOpenWaveInvoicesForCustomer(env, customerName) {
 }
 
 async function recordWaveInvoicePayment(env, { invoiceId, amount, date }) {
-  const data = await waveGraphQL(env, `mutation($input: InvoicePaymentCreateInput!) {
-    invoicePaymentCreate(input: $input) { didSucceed inputErrors { message code path } payment { id } }
+  const data = await waveGraphQL(env, `mutation($input: InvoicePaymentCreateManualInput!) {
+    invoicePaymentCreateManual(input: $input) { didSucceed inputErrors { message code path } invoicePayment { id } }
   }`, {
-    input: { invoiceId, amount, paymentDate: date, accountId: WAVE_CASH_ON_HAND_ACCOUNT_ID }
+    input: {
+      invoiceId,
+      paymentAccountId: WAVE_CASH_ON_HAND_ACCOUNT_ID,
+      amount,
+      paymentDate: date,
+      paymentMethod: "CASH",
+      exchangeRate: 1
+    }
   });
-  const result = data.invoicePaymentCreate;
+  const result = data.invoicePaymentCreateManual;
   if (!result.didSucceed) throw new Error(`Wave payment recording failed: ${JSON.stringify(result.inputErrors)}`);
-  return result.payment.id;
+  return result.invoicePayment.id;
 }
 
 // Picks which open invoice a reported payment belongs to: the one open
