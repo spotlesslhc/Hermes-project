@@ -1,39 +1,47 @@
 ---
-title: Invoice payment tracking (cash done, Venmo/Zelle auto-matching next)
+title: Invoice payment tracking (reported cash/Zelle/Venmo done, hands-free auto-matching next)
 tags: [bookkeeper, wave, venmo, zelle]
 started: 2026-09-28
 updated: 2026-09-28
-status: cash reporting built (PR feature/record-invoice-payment, not yet live-tested); Venmo/Zelle auto-matching not started
+status: reporting for all three methods built and live-tested; hands-free (no reporting) auto-matching not started
 ---
 
-# Invoice payment tracking (cash done, Venmo/Zelle auto-matching next)
+# Invoice payment tracking (reported cash/Zelle/Venmo done, hands-free auto-matching next)
 
 ## What this is
 
 Bryce wants Wave invoice payments tracked without him manually opening
-Wave every time: (1) tell Deja when he's paid in cash and have her mark
-the invoice paid, (2) have Venmo and Zelle payments automatically matched
-to the right invoice, no manual reporting needed for those two.
+Wave every time: (1) tell Deja when he's been paid and have her mark the
+invoice paid, correctly routed by method, (2) eventually have Venmo and
+Zelle payments matched automatically with no reporting needed at all.
 
-## Done: cash reporting
+## Done: reported payments (cash, Zelle, Venmo)
 
-New `record_invoice_payment` Deja tool (`src/index.js`) -- Bryce says "I
-got $250 cash from Sparks," Deja finds the matching open Wave invoice and
-marks it paid. Always posts into **Cash on Hand**, confirmed directly with
-Bryce and in Wave's own "Record a manual payment" UI -- Wave's chart of
-accounts also showed the two real bank accounts payments must never touch:
-"SPOTLESS CLEANING (694)" and "TOT FREE 0004 (301)".
+`record_invoice_payment` Deja tool (`src/index.js`) -- Bryce says "I got
+$250 cash from Sparks" or "Silvia paid $169.75 by Zelle into checking6481,"
+Deja finds the matching open Wave invoice and marks it paid. Cash always
+posts into **Cash on Hand** (confirmed directly with Bryce and in Wave's
+own "Record a manual payment" UI); Zelle/Venmo post into whichever real
+bank account Bryce names, looked up by name via `findWaveAccountByName`
+rather than hardcoded -- Bryce has more real accounts than the two
+originally known ("SPOTLESS CLEANING (694)" and "TOT FREE 0004 (301)");
+"checking6481" turned up 2026-09-28 recording the Silvia payment below.
 
-**Not yet live-tested.** The `invoicePaymentCreate` mutation's exact field
-names came from public docs/search results, not confirmed against Wave's
-live GraphQL schema directly -- couldn't get a working introspection
-session (the public playground at gql.waveapps.com needs a bearer token
-we don't have without extracting the live secret, and Wave's own
-account-scoped GraphQL explorer wasn't reachable in the time available).
-First real use of this tool, with Bryce watching, is what actually proves
-or fixes the field names -- same pattern as how
-`WAVE_CASH_ON_HAND_ACCOUNT_ID` itself was originally confirmed (see the
-"live schema introspection" comment above it in `src/index.js`).
+Also added `correct_invoice_payment` for when a payment's already been
+marked paid with the wrong method/account -- deletes the existing Wave
+payment and re-records it correctly, since `record_invoice_payment` only
+ever touches *open* invoices and can't fix its own mistake.
+
+**Live-tested, in a roundabout way.** The first real attempt (recording
+$169.75 cash from Silvia, 2026-09-28) failed with
+`GRAPHQL_VALIDATION_FAILED` -- the guessed mutation name and field names
+were wrong. Fixed by confirming the real schema directly against Wave's
+published API reference (see
+[[2026-09-28-record-invoice-payment-wrong-graphql-mutation]]). The second
+attempt succeeded (invoice #474, marked paid as cash) -- except it turned
+out Bryce actually got paid by Zelle, which is what surfaced the need for
+payment-method routing in the first place, and became the live test for
+`correct_invoice_payment` too.
 
 ## Not started: Venmo/Zelle auto-matching
 
@@ -62,6 +70,9 @@ Open design questions, not yet discussed with Bryce:
 
 ## Blocked on
 
-Bryce watching a live test of `record_invoice_payment` against a real
-cash payment (to confirm the Wave mutation actually works as written)
-before starting the Venmo/Zelle phase.
+Bryce confirmed 2026-09-28: he does want the hands-free phase eventually,
+but wants to watch the reporting-based version (above) run correctly for
+a while first before building the bigger automation on top of it --
+deliberate staging, not an open question about whether to build it. Don't
+start the Venmo/Zelle auto-matching project until he says he's ready to
+move past manual reporting.
