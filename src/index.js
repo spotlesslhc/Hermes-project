@@ -946,6 +946,131 @@ async function resetWeeklyZapierErrorCount(env) {
   await setStatus(env, { zapier_overseer: { ...overseer, errors: 0 } });
 }
 
+// ---- Cleaner text reminders: 3-week-out Telegram approval ----------------
+//
+// Bryce wants cleaners texted about an upcoming job once it's within 3
+// weeks, and never before that. There's no trustworthy Google Voice API
+// (see Knowledge/unfinished-projects/cleaner-sms-3week-notifications.md),
+// so Hermes doesn't send the text itself -- it only finds what's due and
+// asks Bryce yes/no over Telegram (so he can approve from anywhere, not
+// just the dashboard).
+//
+// Deliberately no incoming /webhooks/telegram route: the whole Worker sits
+// behind Cloudflare Access (see Knowledge/decisions/2026-09-26-webhook-secret-auth.md),
+// which is whole-worker-or-nothing, and Telegram's webhook mechanism has no
+// way to attach an Access Service Token the way Zapier's now does -- it
+// would just hit Access's login page and silently never arrive, the exact
+// failure shape that doc already caught once. Instead, Claude Code (which
+// already authenticates to this Worker's /api/* routes the same way
+// tools/deja-bridge does) polls both /api/sms-batch here AND Telegram's own
+// getUpdates API directly with the bot token, then reports Bryce's reply
+// back via /api/sms-batch/resolve. Also drives the actual Google Voice send
+// once approved, in Bryce's own signed-in browser.
+const CLEAN_TEXT_LOOKAHEAD_DAYS = 21;
+
+async function sendTelegramMessage(env, text) {
+  const token = await env.TELEGRAM_BOT_TOKEN.get();
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text })
+  });
+  if (!res.ok) throw new Error(`Telegram sendMessage failed: ${res.status} ${await res.text()}`);
+}
+
+const TELEGRAM_APPROVAL_CURRENT_KEY = "telegram_approval_current";
+
+async function getCurrentTelegramApproval(env) {
+  const id = await env.HERMES_KV.get(TELEGRAM_APPROVAL_CURRENT_KEY);
+  if (!id) return null;
+  const raw = await env.HERMES_KV.get(`telegram_approval:${id}`);
+  return raw ? JSON.parse(raw) : null;
+}
+
+// One batch outstanding at a time -- matches the real use case (one daily
+// check), and keeps Bryce from getting two overlapping Telegram approval
+// asks. A denied/sent batch clears the "current" pointer before the next
+// check can create a new one.
+async function createTelegramApproval(env, cleanings) {
+  const id = crypto.randomUUID();
+  const record = { id, cleanings, status: "pending", createdAt: new Date().toISOString(), resolvedAt: null };
+  await env.HERMES_KV.put(`telegram_approval:${id}`, JSON.stringify(record));
+  await env.HERMES_KV.put(TELEGRAM_APPROVAL_CURRENT_KEY, id);
+
+  const lines = cleanings.map((c) => `${c.cleaner}: ${c.property} ${c.date}`);
+  await sendTelegramMessage(
+    env,
+    `${cleanings.length} cleaning${cleanings.length === 1 ? "" : "s"} just crossed 3 weeks out — OK to text these cleaners?\n${lines.join("\n")}\n\nReply yes or no.`
+  );
+  await appendLog(env, { who: "Scheduler", what: `Asked Bryce on Telegram to approve texting cleaners: ${lines.join("; ")}` });
+  return record;
+}
+
+async function resolveTelegramApproval(env, decision) {
+  const record = await getCurrentTelegramApproval(env);
+  if (!record || record.status !== "pending") return null;
+  record.status = decision;
+  record.resolvedAt = new Date().toISOString();
+  await env.HERMES_KV.put(`telegram_approval:${record.id}`, JSON.stringify(record));
+  await env.HERMES_KV.delete(TELEGRAM_APPROVAL_CURRENT_KEY);
+  await appendLog(env, { who: "Scheduler", what: `Bryce ${decision === "yes" ? "approved" : "denied"} the cleaner-text batch via Telegram` });
+  return record;
+}
+
+// Claude Code calls this once the texts actually go out, so the record
+// reflects reality instead of just "approved."
+async function completeTelegramApproval(env, id) {
+  const raw = await env.HERMES_KV.get(`telegram_approval:${id}`);
+  if (!raw) return null;
+  const record = JSON.parse(raw);
+  record.status = "sent";
+  await env.HERMES_KV.put(`telegram_approval:${id}`, JSON.stringify(record));
+  await appendLog(env, { who: "Scheduler", what: "Cleaner text batch sent by Claude Code" });
+  return record;
+}
+
+// Runs daily (see the "crons" trigger in wrangler.jsonc). Finds every
+// non-cancelled Cleans event within CLEAN_TEXT_LOOKAHEAD_DAYS that hasn't
+// already been surfaced -- a KV flag per event id means a cleaning is only
+// ever included in one batch, whether it just crossed the 3-week line today
+// or was booked from scratch already inside it.
+async function runDailyCleanTextCheck(env) {
+  const existing = await getCurrentTelegramApproval(env);
+  if (existing && existing.status === "pending") return;
+
+  const calendarId = await getCleansCalendarId(env);
+  const now = new Date();
+  const params = new URLSearchParams({
+    timeMin: now.toISOString(),
+    timeMax: addDays(now, CLEAN_TEXT_LOOKAHEAD_DAYS).toISOString(),
+    singleEvents: "true",
+    orderBy: "startTime",
+    maxResults: "250"
+  });
+  const data = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events?${params}`);
+  const events = (data.items || []).filter((e) => e.status !== "cancelled");
+  const roster = await getCleanerRoster(env);
+
+  const due = [];
+  for (const event of events) {
+    const flagKey = `cleaning_texted:${event.id}`;
+    if (await env.HERMES_KV.get(flagKey)) continue;
+    const cleanerAttendee = (event.attendees || []).find((a) => a.responseStatus === "accepted");
+    if (!cleanerAttendee) continue; // No confirmed cleaner yet -- nothing to tell them.
+    const cleanerName = Object.entries(roster).find(([, email]) => email === cleanerAttendee.email)?.[0] || cleanerAttendee.email;
+    due.push({
+      eventId: event.id,
+      cleaner: cleanerName,
+      property: event.summary,
+      date: (event.start?.dateTime || event.start?.date || "").slice(0, 10)
+    });
+  }
+  if (!due.length) return;
+
+  for (const job of due) await env.HERMES_KV.put(`cleaning_texted:${job.eventId}`, "1");
+  await createTelegramApproval(env, due);
+}
+
 // ---- KV helpers ---------------------------------------------------------
 
 const DEFAULT_STATUS = {
@@ -1942,6 +2067,37 @@ export default {
     if (pathname === "/webhooks/zapier-status" && method === "POST") {
       return handleZapierStatusWebhook(request, env);
     }
+    if (pathname === "/api/sms-batch" && method === "GET") {
+      return json((await getCurrentTelegramApproval(env)) || { status: "none" });
+    }
+    // Claude Code calls this after reading Bryce's yes/no reply straight off
+    // Telegram's own API (getUpdates, via the bot token) -- there's no
+    // incoming webhook here on purpose, see the comment above
+    // createTelegramApproval for why.
+    if (pathname === "/api/sms-batch/resolve" && method === "POST") {
+      try {
+        const body = await request.json();
+        if (body.decision !== "yes" && body.decision !== "no") {
+          return json({ error: 'decision must be "yes" or "no"' }, { status: 400 });
+        }
+        const record = await resolveTelegramApproval(env, body.decision);
+        if (!record) return json({ error: "No pending batch to resolve" }, { status: 404 });
+        return json({ ok: true, record });
+      } catch (err) {
+        return json({ error: err.message }, { status: 400 });
+      }
+    }
+    if (pathname === "/api/sms-batch/complete" && method === "POST") {
+      try {
+        const body = await request.json();
+        if (!body.id) return json({ error: "id is required" }, { status: 400 });
+        const record = await completeTelegramApproval(env, body.id);
+        if (!record) return json({ error: "Batch not found" }, { status: 404 });
+        return json({ ok: true, record });
+      } catch (err) {
+        return json({ error: err.message }, { status: 400 });
+      }
+    }
     if (pathname === "/api/google-calendar/status" && method === "GET") {
       try {
         const calendarId = await getCleansCalendarId(env);
@@ -1990,7 +2146,12 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runWeeklyPayrollCheck(env));
-    ctx.waitUntil(resetWeeklyZapierErrorCount(env));
+    if (event.cron === "0 15 * * 1") {
+      ctx.waitUntil(runWeeklyPayrollCheck(env));
+      ctx.waitUntil(resetWeeklyZapierErrorCount(env));
+    }
+    if (event.cron === "0 15 * * *") {
+      ctx.waitUntil(runDailyCleanTextCheck(env));
+    }
   }
 };

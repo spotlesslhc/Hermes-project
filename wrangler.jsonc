@@ -58,15 +58,27 @@
       "binding": "ZAPIER_WEBHOOK_SECRET",
       "store_id": "8f15d6429b5741f9ac32e05415413a65",
       "secret_name": "ZAPIER_WEBHOOK_SECRET"
+    },
+    {
+      "binding": "TELEGRAM_BOT_TOKEN",
+      "store_id": "8f15d6429b5741f9ac32e05415413a65",
+      "secret_name": "TELEGRAM_BOT_TOKEN"
     }
   ],
   "vars": {
-    "HERMES_DEBUG_TOOLS": "false"
+    "HERMES_DEBUG_TOOLS": "false",
+    // Bryce's own Telegram chat id with the Hermes bot -- not secret (just
+    // an id), used to send/verify the cleaner-text approval messages.
+    "TELEGRAM_CHAT_ID": "2051302886"
   },
   "triggers": {
     // Every Monday at 8am America/Phoenix (UTC-7 year-round, no DST) --
     // posts a payroll reminder to the Activity log. See runWeeklyPayrollCheck
     // in src/index.js and Knowledge/systems/payroll.md.
-    "crons": ["0 15 * * 1"]
+    // Every day at 8am America/Phoenix -- checks for cleanings that just
+    // crossed 3 weeks out and asks Bryce via Telegram whether to text the
+    // cleaner. See runDailyCleanTextCheck in src/index.js and
+    // Knowledge/unfinished-projects/cleaner-sms-3week-notifications.md.
+    "crons": ["0 15 * * 1", "0 15 * * *"]
   }
 }
