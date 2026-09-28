@@ -955,17 +955,21 @@ async function resetWeeklyZapierErrorCount(env) {
 // asks Bryce yes/no over Telegram (so he can approve from anywhere, not
 // just the dashboard).
 //
-// Deliberately no incoming /webhooks/telegram route: the whole Worker sits
-// behind Cloudflare Access (see Knowledge/decisions/2026-09-26-webhook-secret-auth.md),
-// which is whole-worker-or-nothing, and Telegram's webhook mechanism has no
-// way to attach an Access Service Token the way Zapier's now does -- it
-// would just hit Access's login page and silently never arrive, the exact
-// failure shape that doc already caught once. Instead, Claude Code (which
-// already authenticates to this Worker's /api/* routes the same way
-// tools/deja-bridge does) polls both /api/sms-batch here AND Telegram's own
-// getUpdates API directly with the bot token, then reports Bryce's reply
-// back via /api/sms-batch/resolve. Also drives the actual Google Voice send
-// once approved, in Bryce's own signed-in browser.
+// A real incoming /webhooks/telegram route only became possible once
+// hermes.spotlesslhc.com existed as a custom domain (see the "routes" entry
+// in wrangler.jsonc): the bare *.workers.dev address sits behind a
+// whole-worker Cloudflare Access app with no path field, and Telegram's
+// webhook mechanism has no way to attach an Access Service Token the way
+// Zapier's now does -- it would've just hit Access's login page and
+// silently never arrived, the exact failure shape
+// Knowledge/decisions/2026-09-26-webhook-secret-auth.md already caught
+// once. The custom domain's Access app is "Public Hostname" type instead,
+// which supports a path-scoped bypass -- Bryce excluded /webhooks/* there
+// so this route is reachable without Access at all, protected only by its
+// own secret_token check below (requireTelegramWebhookSecret), same shape
+// as every other webhook in this file. Claude Code still does the actual
+// Google Voice send (no trustworthy API for that exists), polling
+// /api/sms-batch to see once Bryce has approved via Telegram.
 const CLEAN_TEXT_LOOKAHEAD_DAYS = 21;
 
 async function sendTelegramMessage(env, text) {
@@ -1027,6 +1031,41 @@ async function completeTelegramApproval(env, id) {
   await env.HERMES_KV.put(`telegram_approval:${id}`, JSON.stringify(record));
   await appendLog(env, { who: "Scheduler", what: "Cleaner text batch sent by Claude Code" });
   return record;
+}
+
+async function requireTelegramWebhookSecret(request, env) {
+  const provided = request.headers.get("x-telegram-bot-api-secret-token") || "";
+  const expected = await env.TELEGRAM_WEBHOOK_SECRET.get();
+  if (!expected || !timingSafeEqual(provided, expected)) {
+    return json({ error: "Unauthorized" }, { status: 401 });
+  }
+  return null;
+}
+
+async function handleTelegramWebhook(request, env) {
+  const authError = await requireTelegramWebhookSecret(request, env);
+  if (authError) return authError;
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ ok: true });
+  }
+
+  const message = body.message;
+  const chatId = String(message?.chat?.id || "");
+  if (!message || chatId !== String(env.TELEGRAM_CHAT_ID)) return json({ ok: true });
+
+  const text = (message.text || "").trim().toLowerCase();
+  if (text.startsWith("yes")) {
+    const record = await resolveTelegramApproval(env, "yes");
+    if (record) await sendTelegramMessage(env, "Got it — Claude will send those next time it checks in.");
+  } else if (text.startsWith("no")) {
+    const record = await resolveTelegramApproval(env, "no");
+    if (record) await sendTelegramMessage(env, "Got it — skipping that batch.");
+  }
+  return json({ ok: true });
 }
 
 // Runs daily (see the "crons" trigger in wrangler.jsonc). Finds every
@@ -2067,25 +2106,11 @@ export default {
     if (pathname === "/webhooks/zapier-status" && method === "POST") {
       return handleZapierStatusWebhook(request, env);
     }
+    if (pathname === "/webhooks/telegram" && method === "POST") {
+      return handleTelegramWebhook(request, env);
+    }
     if (pathname === "/api/sms-batch" && method === "GET") {
       return json((await getCurrentTelegramApproval(env)) || { status: "none" });
-    }
-    // Claude Code calls this after reading Bryce's yes/no reply straight off
-    // Telegram's own API (getUpdates, via the bot token) -- there's no
-    // incoming webhook here on purpose, see the comment above
-    // createTelegramApproval for why.
-    if (pathname === "/api/sms-batch/resolve" && method === "POST") {
-      try {
-        const body = await request.json();
-        if (body.decision !== "yes" && body.decision !== "no") {
-          return json({ error: 'decision must be "yes" or "no"' }, { status: 400 });
-        }
-        const record = await resolveTelegramApproval(env, body.decision);
-        if (!record) return json({ error: "No pending batch to resolve" }, { status: 404 });
-        return json({ ok: true, record });
-      } catch (err) {
-        return json({ error: err.message }, { status: 400 });
-      }
     }
     if (pathname === "/api/sms-batch/complete" && method === "POST") {
       try {
