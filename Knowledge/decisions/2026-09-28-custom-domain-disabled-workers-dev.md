@@ -1,7 +1,7 @@
 ---
 title: Adding the custom domain silently killed the workers.dev address
 tags: [decisions, security, zapier-overseer, bug, outage]
-status: found and fixed 2026-09-28, needs live re-verification of the Turno Zap
+status: found, fixed, and verified live 2026-09-28
 updated: 2026-09-28
 ---
 
@@ -39,13 +39,14 @@ Added `"workers_dev": true` to `wrangler.jsonc` alongside the `routes`
 entry, so both addresses stay live simultaneously. PR:
 `fix/restore-workers-dev-route`.
 
-## What this means for the Zapier secret bug fix
+## What this meant for the Zapier secret bug fix
 
 The 404 masked whether [[2026-09-28-zapier-webhook-secret-get-bug]]'s fix
-actually works — the request never got far enough to hit either
-Cloudflare Access or the Worker's own secret check. **Needs a fresh
-Zapier test run once this fix deploys** to actually confirm the secret
-check works now.
+actually worked — the request never got far enough to hit either
+Cloudflare Access or the Worker's own secret check. Confirmed via curl
+(root and `/api/status` both back to a 302) and a real Zapier Test run
+right after this deployed: full chain (Access → secret check → reservation
+parser) now works end to end.
 
 ## What to do differently next time
 
