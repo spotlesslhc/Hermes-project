@@ -711,7 +711,7 @@ async function findWaveInvoiceByNumber(env, invoiceNumber) {
 async function getWaveInvoicePayments(env, invoiceId) {
   const businessId = await getWaveBusinessId(env);
   const data = await waveGraphQL(env, `query($businessId: ID!, $invoiceId: ID!) {
-    business(id: $businessId) { invoice(id: $invoiceId) { payments { id amount { value } paymentDate } } }
+    business(id: $businessId) { invoice(id: $invoiceId) { payments { id amount paymentDate } } }
   }`, { businessId, invoiceId });
   return (data.business && data.business.invoice && data.business.invoice.payments) || [];
 }
@@ -728,7 +728,7 @@ async function correctWaveInvoicePayment(env, { invoice_number, payment_method, 
   const existing = await getWaveInvoicePayments(env, invoiceId);
   for (const p of existing) await deleteWaveInvoicePayment(env, p.id);
 
-  const useAmount = amount ?? (existing[0] ? parseFloat(existing[0].amount.value) : null);
+  const useAmount = amount ?? (existing[0] ? parseFloat(existing[0].amount) : null);
   const useDate = date || (existing[0] && existing[0].paymentDate) || toDateOnly(new Date());
   if (useAmount == null) throw new Error("No existing payment found on this invoice and no amount given — can't correct.");
 
