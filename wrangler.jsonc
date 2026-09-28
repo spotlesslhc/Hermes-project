@@ -68,6 +68,11 @@
       "binding": "TELEGRAM_WEBHOOK_SECRET",
       "store_id": "8f15d6429b5741f9ac32e05415413a65",
       "secret_name": "TELEGRAM_WEBHOOK_SECRET"
+    },
+    {
+      "binding": "META_PAGE_ACCESS_TOKEN",
+      "store_id": "8f15d6429b5741f9ac32e05415413a65",
+      "secret_name": "META_PAGE_ACCESS_TOKEN"
     }
   ],
   // spotlesslhc.com is already a Cloudflare-managed zone (the website runs
@@ -99,7 +104,11 @@
     "HERMES_DEBUG_TOOLS": "false",
     // Bryce's own Telegram chat id with the Hermes bot -- not secret (just
     // an id), used to send/verify the cleaner-text approval messages.
-    "TELEGRAM_CHAT_ID": "2051302886"
+    "TELEGRAM_CHAT_ID": "2051302886",
+    // Not secret (just ids) -- the Spotless Cleaning Facebook Page and its
+    // linked Instagram Business account, used by runWeeklySocialDigest.
+    "META_PAGE_ID": "1347130178484829",
+    "META_IG_BUSINESS_ID": "17841476769091300"
   },
   "triggers": {
     // Every Monday at 8am America/Phoenix (UTC-7 year-round, no DST) --
@@ -109,6 +118,10 @@
     // crossed 3 weeks out and asks Bryce via Telegram whether to text the
     // cleaner. See runDailyCleanTextCheck in src/index.js and
     // Knowledge/unfinished-projects/cleaner-sms-3week-notifications.md.
-    "crons": ["0 15 * * 1", "0 15 * * *"]
+    // Every Monday at 8:30am America/Phoenix -- sends a Telegram digest of
+    // Facebook/Instagram follower counts and post activity. See
+    // runWeeklySocialDigest in src/index.js and
+    // Knowledge/unfinished-projects/social-media-ads-agent.md.
+    "crons": ["0 15 * * 1", "0 15 * * *", "30 15 * * 1"]
   }
 }
