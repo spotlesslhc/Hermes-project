@@ -1,7 +1,7 @@
 ---
 title: The Zapier webhook secret check has been broken since it shipped
 tags: [decisions, security, zapier-overseer, bug]
-status: fixed 2026-09-28, not yet verified against a real Zapier call
+status: fixed and verified live 2026-09-28
 updated: 2026-09-28
 ---
 
@@ -50,23 +50,26 @@ without checking (or that this one's diagnosis is right without checking)
 every other secret in this file. Its three callers now `await` it. PR:
 `fix/zapier-webhook-secret-get`.
 
-## How to verify this live
+## Verified live (2026-09-28)
 
-Not yet done -- couldn't test the "correct secret" path from Claude Code
-directly (extracting the live secret value to build a manual curl test
-was refused by the sandbox's safety classifier, correctly, since that's
-exactly the kind of credential materialization this project already
-treats as risky). The real test:
+Ran a real Test run of the Turno Zap (via Bryce's own logged-in Zapier
+session). First attempt returned a 404, not a 401 -- traced to a separate,
+unrelated regression
+([[2026-09-28-custom-domain-disabled-workers-dev]]) that had broken the
+whole `*.workers.dev` address. Fixed that, re-ran the test:
 
-1. In Zapier, open the Turno Zap's `Webhooks by Zapier POST` step (the one
-   with the `X-Zapier-Secret` header already configured from
-   [[2026-09-26-webhook-secret-auth]]).
-2. Run a real **Test step** with a real or realistic sample payload.
-3. Confirm it succeeds and actually reaches the Worker's reservation logic
-   (check the Activity log for a new-reservation entry, or an explicit
-   parse error if the sample data isn't a real reservation -- either is
-   fine, both mean the request got through; a 401 means this fix didn't
-   work).
+- Passed Cloudflare Access.
+- Passed the (now-fixed) secret check.
+- Reached `parseTurnoReservationEmail`, which correctly rejected the
+  generic Gmail forwarding-confirmation sample with
+  `"Couldn't find a Check-in line in the reservation email."` -- the
+  expected outcome for non-reservation test data, and proof the request
+  made it all the way through the real logic with no side effects to
+  clean up.
+
+Full chain (Access -> secret check -> parser) confirmed sound. The next
+real Sahara reservation email is still the true end-to-end proof, per
+[[unfinished-projects/verify-scheduling-with-real-bookings]].
 
 ## What to do differently next time
 
