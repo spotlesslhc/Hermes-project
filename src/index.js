@@ -1981,6 +1981,16 @@ async function handleAsk(request, env) {
   const message = (body.message || "").toString().slice(0, 4000);
   if (!message) return json({ error: "Message is required" }, { status: 400 });
 
+  // Plain prior turns the caller (currently just the dashboard) sends back so
+  // a reply to Deja's own clarifying question still has the question in
+  // context — /api/ask itself stores nothing between requests. Capped the
+  // same way DEJA_HISTORY_MAX_TURNS is on the frontend, re-enforced here
+  // since a request body isn't trustworthy on its own.
+  const history = (Array.isArray(body.history) ? body.history : [])
+    .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+    .slice(-12)
+    .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }));
+
   if (!env.ANTHROPIC_API_KEY) {
     return json({ error: "ANTHROPIC_API_KEY is not bound on this project yet." }, { status: 500 });
   }
@@ -2167,7 +2177,7 @@ async function handleAsk(request, env) {
     system += `\n\n## What you remember from past conversations\n${memory.map((m) => `- (${m.date}) ${m.text}`).join("\n")}\n\nUse the remember tool to add to this list when Bryce states something worth keeping.`;
   }
 
-  const messages = [{ role: "user", content: message }];
+  const messages = [...history, { role: "user", content: message }];
   let reply = "";
   let toolFailed = false;
 

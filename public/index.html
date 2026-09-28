@@ -699,6 +699,13 @@
   tick();
   setInterval(tick, 30000);
 
+  // Plain user/Deja turns for this page session only (resets on reload) — sent
+  // back with each /api/ask call so she still has the thread if she asked a
+  // clarifying question and is now getting the answer. Capped so a long
+  // back-and-forth doesn't grow the request without bound.
+  let dejaHistory = [];
+  const DEJA_HISTORY_MAX_TURNS = 6;
+
   const STATUS_DOT = { running: '', attn: 'amber', error: 'red', idle: '' };
   const STATUS_BORDER = { running: 'on', attn: 'attn', error: 'attn', idle: '' };
 
@@ -860,7 +867,7 @@
       const res = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message })
+        body: JSON.stringify({ message, history: dejaHistory })
       });
       const data = await res.json();
       reply.classList.remove('pending');
@@ -869,6 +876,8 @@
       stateEl.textContent = 'Ready';
       if(window.DejaVoice) window.DejaVoice.setExpectFollowUp(res.ok ? !!data.keepListening : true);
       if(res.ok){
+        dejaHistory.push({ role: 'user', content: message }, { role: 'assistant', content: text });
+        dejaHistory = dejaHistory.slice(-DEJA_HISTORY_MAX_TURNS * 2);
         loadLog();
         loadPending();
         if(document.getElementById('voiceToggle').checked){
