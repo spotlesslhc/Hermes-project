@@ -70,9 +70,9 @@ Open design questions, not yet discussed with Bryce:
 
 ## Blocked on
 
-Bryce deciding whether the hands-free phase is worth building at all --
-it's a real new project (scheduled Claude in Chrome automation against
-his signed-in Venmo/Zelle, same shape as the cleaner-texting pipeline),
-not a small extension of what exists now. The reporting-based version
-above (tell Deja, she matches and posts correctly) may be good enough on
-its own.
+Bryce confirmed 2026-09-28: he does want the hands-free phase eventually,
+but wants to watch the reporting-based version (above) run correctly for
+a while first before building the bigger automation on top of it --
+deliberate staging, not an open question about whether to build it. Don't
+start the Venmo/Zelle auto-matching project until he says he's ready to
+move past manual reporting.
