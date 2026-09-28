@@ -2,10 +2,32 @@
 title: Fremont & Bluegill Airbnb automation
 tags: [scheduler, bookkeeper, zapier, google-calendar, wave, airbnb]
 started: 2026-09-25
-updated: 2026-09-26
+updated: 2026-09-27
+status: co-host approach abandoned; pivoting to Hospitable, blocked on Bryce meeting the owner
 ---
 
 # Fremont & Bluegill Airbnb automation
+
+## Pivot (2026-09-27)
+
+Bryce decided the co-host approach below **won't work** — reason not
+recorded, but he's changed the plan: bring these two properties into
+**Hospitable** instead (same system already running Columbine, Palo
+Verde, and Unit 324), rather than a bespoke Airbnb-co-host email trigger.
+This makes everything under "Co-host invite in progress" and the two
+Airbnb invites moot — no need to keep chasing their acceptance status.
+
+**Blocked on Bryce meeting with the owner first** — nothing here can move
+until that happens (presumably to get Hospitable access/permission set up
+on the owner's listings, same way the other three properties are wired
+in). Once Hospitable is live for these two, the build should mostly mirror
+the existing Hospitable properties' pattern rather than the
+Turno/email-parsing pattern originally planned below — revisit the "What's
+left" section below once Hospitable access exists, since several of those
+steps (Gmail filter, Email Parser, Turno-style webhook parsing) may no
+longer apply.
+
+## Original co-host plan (superseded, kept for reference)
 
 ## What this is
 
@@ -124,8 +146,5 @@ manually rather than the two sessions messaging directly.
 
 ## Blocked on
 
-Waiting on Bryce to relay back from the "Claude cowork" session: whether
-the Bluegill invite was sent (and its address confirmed as 3628 Bluegill
-Dr), and whether `bryce55777@gmail.com` has received and accepted both
-co-host invites. Nothing in "What's left" can start until co-host access
-is confirmed live.
+Superseded by the 2026-09-27 pivot above: now blocked on Bryce meeting
+with the owner to set up Hospitable access for these two properties.
