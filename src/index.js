@@ -1017,6 +1017,37 @@ async function resetWeeklyZapierErrorCount(env) {
   await setStatus(env, { zapier_overseer: { ...overseer, errors: 0 } });
 }
 
+// ---- Social media tracking: weekly Facebook/Instagram digest -------------
+//
+// Phase 1 of Knowledge/unfinished-projects/social-media-ads-agent.md --
+// organic-only tracking, no paid ads. Just reports follower/post counts for
+// now; richer per-post "what's working" comparisons need post history to
+// exist first (both accounts started at 0 posts/followers).
+async function metaGraphApi(env, path, params = {}) {
+  const token = await env.META_PAGE_ACCESS_TOKEN.get();
+  const url = new URL(`https://graph.facebook.com/v20.0${path}`);
+  url.searchParams.set("access_token", token);
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  const res = await fetch(url.toString());
+  const body = await res.json();
+  if (body.error) throw new Error(`Meta Graph API error on ${path}: ${JSON.stringify(body.error)}`);
+  return body;
+}
+
+async function runWeeklySocialDigest(env) {
+  const [page, ig] = await Promise.all([
+    metaGraphApi(env, `/${env.META_PAGE_ID}`, { fields: "name,fan_count" }),
+    metaGraphApi(env, `/${env.META_IG_BUSINESS_ID}`, { fields: "username,followers_count,media_count" })
+  ]);
+
+  const lines = [
+    `Facebook (${page.name}): ${page.fan_count ?? 0} followers`,
+    `Instagram (@${ig.username}): ${ig.followers_count ?? 0} followers, ${ig.media_count ?? 0} posts`
+  ];
+  await sendTelegramMessage(env, `📊 Weekly social snapshot\n${lines.join("\n")}`);
+  await appendLog(env, { who: "Social", what: `Weekly social digest sent: ${lines.join(" | ")}` });
+}
+
 // ---- Cleaner text reminders: 3-week-out Telegram approval ----------------
 //
 // Bryce wants cleaners texted about an upcoming job once it's within 3
@@ -2401,6 +2432,9 @@ export default {
     }
     if (event.cron === "0 15 * * *") {
       ctx.waitUntil(runDailyCleanTextCheck(env));
+    }
+    if (event.cron === "30 15 * * 1") {
+      ctx.waitUntil(runWeeklySocialDigest(env));
     }
   }
 };
