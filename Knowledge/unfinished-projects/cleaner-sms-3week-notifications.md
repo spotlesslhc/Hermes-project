@@ -17,35 +17,41 @@ Palo Verde, Unit 324, and Fremont/Bluegill once
 [[fremont-bluegill-airbnb-automation|that's built]]), not just the two
 new Airbnb properties that prompted the conversation.
 
-Decisions made 2026-09-27 (via AskUserQuestion):
+Decisions made 2026-09-27 (via AskUserQuestion, then follow-up):
 - **Scope**: all properties, not just Fremont/Bluegill.
 - **Notification mode**: text is **in addition to** the existing Cleans
   calendar invite/attendee, not a replacement.
-- **Channel**: Bryce wants to keep using his existing **Google Voice**
-  number specifically (rejected Twilio) — accepting the risk of an
-  unofficial/reverse-engineered integration over buying a new number.
+- **Channel**: **Twilio**, not Google Voice. Bryce initially wanted to
+  keep his Google Voice number, but after discussing that Deja "logging
+  in" to Google Voice would mean storing his real Google credentials as a
+  Worker secret (a bigger exposure risk than an API key, and likely to
+  get flagged/blocked by Google's automated-login detection anyway) and
+  that only unmaintained reverse-engineered libraries exist for sending
+  through it, he switched to Twilio — a real API, no credential-sharing,
+  no reverse-engineering risk.
 
-## Research so far (2026-09-27)
+## Why not Google Voice (ruled out 2026-09-27)
 
-Google has no official API for sending SMS through Google Voice. A quick
-search turned up only community-maintained, apparently unmaintained
-reverse-engineered libraries (e.g. `node-google-voice`, `autogvoice` on
-GitHub) that scrape/replay Google's internal web protocol — no official
-support, no stability guarantee, and technically against Google's terms
-of service for that product. None have been evaluated hands-on yet (not
-installed, not tested against Bryce's real account).
-
-**Flag for Bryce**: this is a real risk for something the cleaning
-business will depend on weekly — an unofficial library can silently break
-whenever Google changes something client-side, with no changelog or
-warning. Worth deciding explicitly whether that's acceptable before
-building on top of one, versus the Twilio alternative already declined.
+Google has no official API for sending SMS through Google Voice, only
+unmaintained community libraries (`node-google-voice`, `autogvoice`) that
+scrape Google's internal web protocol. The alternative — giving Deja a
+real browser session logged in as Bryce — would mean storing his actual
+Google account credentials/session as a Worker secret, which both is a
+bigger blast-radius secret than an API token (this project already had
+one secret-exposure incident, see
+[[decisions/2026-09-21-wave-client-secret-exposure]]) and would likely get
+blocked by Google's bot detection on repeated automated sign-ins from a
+datacenter IP anyway. Not worth it when Twilio does this natively.
 
 ## What's left
 
-1. **Bryce decides**: proceed with an unofficial Google Voice library
-   (and which one), or revisit Twilio/another real API, before any code
-   gets written against a specific approach.
+1. **Bryce signs up for Twilio and buys a phone number** — account
+   creation and any payment method entry has to be done by Bryce himself,
+   not automated. Once he has an Account SID, Auth Token, and a Twilio
+   phone number, hand those to Claude Code to wire in as
+   `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_PHONE_NUMBER`
+   secrets (same `secrets_store_secrets` pattern as everything else in
+   `wrangler.jsonc`).
 2. **Design the 3-week trigger.** Likely a scheduled check (reusing the
    existing Cloudflare Cron Trigger pattern from
    [[systems/payroll|the payroll reminder]]) that scans upcoming Cleans
@@ -70,4 +76,5 @@ building on top of one, versus the Twilio alternative already declined.
 
 ## Blocked on
 
-Bryce's decision on the Google Voice integration approach (item 1 above).
+Bryce signing up for Twilio and getting a phone number + credentials
+(item 1 above) — nothing else can be built or tested without them.
