@@ -2,8 +2,8 @@
 title: Text cleaners their cleanings 3 weeks out (Google Voice + Telegram approval)
 tags: [scheduler, google-calendar, sms, google-voice, telegram]
 started: 2026-09-27
-updated: 2026-09-27
-status: Worker side built (PRs merged); Claude Code polling/sending script still needed
+updated: 2026-09-28
+status: Live -- Access policy confirmed working, webhook registered, cascade auto-invite added; needs a real end-to-end test
 ---
 
 # Text cleaners their cleanings 3 weeks out (Google Voice + Telegram approval)
@@ -85,25 +85,64 @@ webhook handler, the secret) was built and shipped in the PR.
    Chrome via Claude in Chrome to actually send each cleaner their text,
    then calls `POST /api/sms-batch/complete` to close it out.
 
+## Extended to cover unassigned cleanings too (2026-09-28)
+
+Bryce noticed cleanings past Oct 4 existed on the calendar but had no
+cleaner invited at all yet -- so the daily check now does two things
+instead of one (see `getCascadeForCleaning` and the rewritten
+`runDailyCleanTextCheck` in `src/index.js`, and the playbook at
+[[playbooks/2026-09-27-cleaner-text-3week-google-voice]]):
+
+- **Already-assigned cleaning** (unchanged): one-time reminder text at 3
+  weeks out, `kind: "reminder"`.
+- **Unassigned cleaning**: at 3 weeks out, the Worker itself picks the
+  next untried, unbusy candidate from that property's cascade and adds
+  them as a real calendar attendee (`inviteCleanerToEvent`, same
+  mechanism as `assign_cleaner` -- happens immediately, doesn't wait on
+  Telegram approval, since it's the same low-risk/reversible action). The
+  text (which *does* wait on Telegram approval, same as a reminder) is
+  `kind: "invite"` and includes an `eventLink` so the cleaner can accept
+  straight from the text.
+
+**Confirmed cascade order** (2026-09-28): Amy first for Sahara, Columbine,
+Palo Verde, Unit 324, Arapaho, and Unit 303; Ashley first for Fremont and
+Bluegill. **Piper is excluded entirely** -- Bryce confirmed that property
+isn't cleaned anymore, so leftover calendar events for it are skipped
+rather than auto-assigned (worth telling Bryce those Piper events on the
+calendar through December are stale and could be deleted, next time
+that's convenient).
+
+Note this cascade is independent of `TURNO_CLEANER_CASCADE` (the
+existing, separate real-time assignment logic for new Sahara/Turno
+reservations) -- confirmed with Bryce that one stays Amy-first too, so
+both are consistent, but they're still two different code paths that
+happen to agree right now rather than one shared source of truth.
+
+If nobody in a property's cascade is available (all busy or already
+declined), or a cleaning's property doesn't match any known cascade,
+Bryce gets an immediate one-time Telegram alert (`alertOnceForEvent`) --
+not folded into the daily batch, since it needs his attention regardless
+of the yes/no approval flow.
+
 ## What's left
 
-1. **Bryce**: do the Cloudflare Access policy step (new "Public Hostname"
-   Access app for `hermes.spotlesslhc.com`, path-exclusion policy for
-   `/webhooks/*`) — instructions were given inline in the conversation
-   that built this, not repeated here since they're one-time setup.
-2. **Register the webhook** with Telegram (`setWebhook`, pointing at
-   `https://hermes.spotlesslhc.com/webhooks/telegram` with the
-   `TELEGRAM_WEBHOOK_SECRET` as `secret_token`) — do this only after the
-   Access exclusion is confirmed live, otherwise Telegram's calls will
-   just hit the Access login page and get dropped.
-3. **The Claude-Code-side script**: poll `/api/sms-batch`, and once
-   approved, drive Google Voice via Claude in Chrome to send each text,
-   then call `/api/sms-batch/complete`. Not built yet.
-4. **Decide how that script actually runs daily** unattended — a
-   scheduled task (this app has an `mcp__scheduled-tasks` tool) vs. Bryce
-   keeping a session open himself.
-5. **Test against a real upcoming cleaning** crossing the 3-week mark
-   before trusting it fully.
+All the infrastructure is built and confirmed working piece by piece
+(Access bypass tested with curl, webhook registered and receiving
+`pending_update_count: 0`, sms-batch scripts tested live, a dry run of the
+scheduled task correctly did nothing when there was no pending batch).
+What's **not yet confirmed**: a real end-to-end run where an actual
+cleaning crosses the 3-week mark (or is genuinely unassigned), a real
+Telegram approval round-trip happens, and Claude Code actually stages a
+real text in Google Voice. Worth watching the first few real days closely
+rather than assuming it's fully proven.
+
+Also still true from the original design:
+- **Zac** isn't in the cleaner roster (no email on file) — he can't be
+  cascade-assigned or texted until that's added.
+- No timeout/escalation if an invited cleaner just never responds
+  (neither accepts nor declines) — the cascade only advances on an
+  explicit decline. Worth revisiting if that turns out to happen in
+  practice.
 
 ## Also surfaced, tracked separately
 

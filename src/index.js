@@ -1001,7 +1001,11 @@ async function createTelegramApproval(env, cleanings) {
   await env.HERMES_KV.put(`telegram_approval:${id}`, JSON.stringify(record));
   await env.HERMES_KV.put(TELEGRAM_APPROVAL_CURRENT_KEY, id);
 
-  const lines = cleanings.map((c) => `${c.cleaner}: ${c.property} ${c.date}`);
+  const lines = cleanings.map((c) =>
+    c.kind === "invite"
+      ? `${c.cleaner}: NEW invite for ${c.property} ${c.date} (not accepted yet)`
+      : `${c.cleaner}: ${c.property} ${c.date}`
+  );
   await sendTelegramMessage(
     env,
     `${cleanings.length} cleaning${cleanings.length === 1 ? "" : "s"} just crossed 3 weeks out — OK to text these cleaners?\n${lines.join("\n")}\n\nReply yes or no.`
@@ -1068,11 +1072,56 @@ async function handleTelegramWebhook(request, env) {
   return json({ ok: true });
 }
 
-// Runs daily (see the "crons" trigger in wrangler.jsonc). Finds every
-// non-cancelled Cleans event within CLEAN_TEXT_LOOKAHEAD_DAYS that hasn't
-// already been surfaced -- a KV flag per event id means a cleaning is only
-// ever included in one batch, whether it just crossed the 3-week line today
-// or was booked from scratch already inside it.
+// Which cleaner gets first offer at each property, and who's next if they're
+// unavailable -- confirmed directly with Bryce 2026-09-28. Piper is
+// deliberately excluded (not `null`-matched by accident): Bryce confirmed
+// that property isn't cleaned anymore, so any leftover calendar events for
+// it are skipped rather than auto-assigned. An unmatched property (or a
+// genuinely new one) also returns null -- alertOnceForEvent surfaces that
+// as "needs manual assignment" rather than guessing a cascade.
+function getCascadeForCleaning(summary) {
+  const text = (summary || "").toLowerCase();
+  if (text.includes("piper")) return null;
+  if (text.includes("fremont") || text.includes("bluegill")) return ["ashley", "amy"];
+  if (
+    text.includes("sahara") || text.includes("columbine") || text.includes("palo verde") ||
+    text.includes("paloverde") || text.includes("unit 324") || text.includes("arapaho") ||
+    text.includes("unit 303")
+  ) {
+    return ["amy", "ashley"];
+  }
+  return null;
+}
+
+// Telegram alerts for a stuck cleaning (no cascade, or cascade exhausted)
+// fire once per event, not every day it stays stuck -- KV flag dedupes it.
+async function alertOnceForEvent(env, event, message) {
+  const key = `cleaning_alert_sent:${event.id}`;
+  if (await env.HERMES_KV.get(key)) return;
+  await env.HERMES_KV.put(key, "1");
+  await sendTelegramMessage(env, `⚠️ ${message}`);
+  await appendLog(env, { who: "Scheduler", what: message });
+}
+
+// Runs daily (see the "crons" trigger in wrangler.jsonc). Two things happen
+// here, both gated on the same CLEAN_TEXT_LOOKAHEAD_DAYS window:
+//
+// 1. A cleaning that already has an accepted cleaner gets a one-time text
+//    reminder (unchanged from the original design) -- a KV flag per event
+//    id means it's only ever included in one batch.
+// 2. A cleaning with **no** accepted cleaner gets a real invite: the next
+//    untried, unbusy candidate in that property's cascade
+//    (getCascadeForCleaning) is added as a calendar attendee right away
+//    (inviteCleanerToEvent -- same mechanism as assign_cleaner, and just as
+//    low-risk/reversible, so it doesn't wait on Telegram approval), and the
+//    text asking them to accept (with a link to the event) DOES wait on
+//    Telegram approval, same as a reminder. If nobody in the cascade is
+//    available, or there's no cascade at all for that property, Bryce gets
+//    an immediate Telegram alert instead of a silent gap.
+//
+// The calendar's own attendee list is the source of truth for "who's been
+// tried" -- no separate KV bookkeeping needed for cascade progress, so a
+// decline naturally moves to the next candidate on the next day's run.
 async function runDailyCleanTextCheck(env) {
   const existing = await getCurrentTelegramApproval(env);
   if (existing && existing.status === "pending") return;
@@ -1092,21 +1141,48 @@ async function runDailyCleanTextCheck(env) {
 
   const due = [];
   for (const event of events) {
-    const flagKey = `cleaning_texted:${event.id}`;
-    if (await env.HERMES_KV.get(flagKey)) continue;
-    const cleanerAttendee = (event.attendees || []).find((a) => a.responseStatus === "accepted");
-    if (!cleanerAttendee) continue; // No confirmed cleaner yet -- nothing to tell them.
-    const cleanerName = Object.entries(roster).find(([, email]) => email === cleanerAttendee.email)?.[0] || cleanerAttendee.email;
-    due.push({
-      eventId: event.id,
-      cleaner: cleanerName,
-      property: event.summary,
-      date: (event.start?.dateTime || event.start?.date || "").slice(0, 10)
-    });
+    const dateOnly = (event.start?.dateTime || event.start?.date || "").slice(0, 10);
+    const accepted = (event.attendees || []).find((a) => a.responseStatus === "accepted");
+
+    if (accepted) {
+      const flagKey = `cleaning_texted:${event.id}`;
+      if (await env.HERMES_KV.get(flagKey)) continue;
+      const cleanerName = Object.entries(roster).find(([, email]) => email === accepted.email)?.[0] || accepted.email;
+      due.push({ kind: "reminder", eventId: event.id, cleaner: cleanerName, property: event.summary, date: dateOnly });
+      await env.HERMES_KV.put(flagKey, "1");
+      continue;
+    }
+
+    const cascade = getCascadeForCleaning(event.summary);
+    if (!cascade) {
+      await alertOnceForEvent(env, event, `${event.summary} on ${dateOnly} has no cleaner cascade defined -- needs manual assignment.`);
+      continue;
+    }
+
+    // Someone's already invited and hasn't answered yet -- wait, don't pile
+    // a second invite on top.
+    const pending = (event.attendees || []).find((a) => a.responseStatus !== "declined" && a.responseStatus !== "accepted");
+    if (pending) continue;
+
+    const tried = new Set((event.attendees || []).map((a) => a.email));
+    const nextName = cascade.find((name) => !tried.has(roster[name]));
+    if (!nextName) {
+      await alertOnceForEvent(env, event, `${event.summary} on ${dateOnly} -- nobody in the cascade is available and this can't be postponed. Needs manual attention.`);
+      continue;
+    }
+
+    const candidateEmail = roster[nextName];
+    if (await isCleanerBusyOnDate(env, calendarId, candidateEmail, dateOnly)) continue; // Re-checked tomorrow.
+
+    const inviteFlagKey = `cleaning_invited:${event.id}:${candidateEmail}`;
+    if (await env.HERMES_KV.get(inviteFlagKey)) continue; // Already texted; waiting on their reply.
+
+    const updated = await inviteCleanerToEvent(env, calendarId, event, candidateEmail);
+    await env.HERMES_KV.put(inviteFlagKey, "1");
+    due.push({ kind: "invite", eventId: event.id, cleaner: nextName, property: event.summary, date: dateOnly, eventLink: updated.htmlLink });
   }
   if (!due.length) return;
 
-  for (const job of due) await env.HERMES_KV.put(`cleaning_texted:${job.eventId}`, "1");
   await createTelegramApproval(env, due);
 }
 
