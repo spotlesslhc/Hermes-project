@@ -15,17 +15,29 @@ find "checking6481". Invoice #474 was left `SENT` with no payment on it
 for several minutes, real money notwithstanding — the actual Zelle deposit
 was never at risk, only Wave's record of it.
 
-## Why, two separate bugs
+## Why, three separate problems
 
-1. **`findWaveAccountByName`'s query wasn't filtered.** Wave's chart of
+1. **The real root cause: a wrong assumption, not a code bug.** The whole
+   payment-method-routing feature (same day, see
+   [[invoice-payment-tracking]]) assumed Zelle/Venmo money always lands in
+   a real Wave-linked bank account, so "not cash" meant "ask which
+   account." Wrong — Bryce's Zelle/Venmo-receiving bank account isn't
+   linked to Wave at all, so he's always put those in Cash on Hand, same
+   as cash. `account_name` should only ever be used when Bryce explicitly
+   names one of the two accounts that *are* actually linked to Wave
+   ("SPOTLESS CLEANING" / "TOT FREE 0004") — never inferred from the
+   payment method, and never asked for by default. This was the thing
+   that sent the correction down the wrong path in the first place.
+2. **`findWaveAccountByName`'s query wasn't filtered.** Wave's chart of
    accounts includes a system "Accounts Receivable" sub-account per
    customer, which drowned out the real bank accounts in the unfiltered
    200-item page — the error message that's supposed to list real accounts
    for Bryce to pick from was useless noise instead. Fixed by filtering
    the query to `subtypes: [CASH_AND_BANK]`.
-2. **`correctWaveInvoicePayment` deleted before validating.** It deleted
+3. **`correctWaveInvoicePayment` deleted before validating.** It deleted
    the existing payment, *then* tried to resolve the destination account —
-   so a bad account name (triggered by bug 1) left the invoice with
+   so a bad account name (triggered by problem 1 asking for the wrong
+   thing, then problem 2 making the lookup fail) left the invoice with
    nothing on it. Fixed by extracting the account resolution into
    `resolveWavePaymentAccount` and calling it before any delete happens,
    so a validation failure now leaves the original payment untouched. If
@@ -44,12 +56,18 @@ noting: it's the "common sense" Bryce asked about earlier the same day
 
 ## Worth remembering
 
-1. **Any "correct/replace" tool that deletes-then-creates needs to validate
+1. **Don't infer a real-world routing assumption ("not cash means a bank
+   account") without confirming it with Bryce first** — ask, the same way
+   `WAVE_CASH_ON_HAND_ACCOUNT_ID` and the "cash always goes to Cash on
+   Hand" rule were originally confirmed directly with him rather than
+   assumed. This one wasn't confirmed before shipping, and cost a real
+   invoice its payment record over it.
+2. **Any "correct/replace" tool that deletes-then-creates needs to validate
    everything it can *before* the delete**, not discover a problem
    mid-flight. `record_cleaner_payment` and `record_invoice_payment` don't
    have this shape (they only ever create), so this risk is specific to
    `correct_invoice_payment` and anything built like it later.
-2. **A lookup's own error-listing is only useful if the underlying query
+3. **A lookup's own error-listing is only useful if the underlying query
    is filtered to what a human would actually recognize.** "Real accounts:
    [200 Accounts Receivable entries]" isn't a usable answer to "which
    account did this land in" — worth checking any other Wave lookup in
