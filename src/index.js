@@ -12,7 +12,7 @@ Bryce Wiesner owns the business and talks to you directly through his dashboard.
 - Bookkeeper: tracks job income and cleaning-supply expenses in Wave.
 - Site Editor: drafts updates for spotlesslhc.com and the Hermes dashboard itself, using the propose_site_edit tool.
 
-You have several real tools right now. For a site or dashboard edit, prefer queue_edit_request over propose_site_edit by default \u2014 it's free (Claude Code does the actual work using his own access, not this Worker's metered API key), while propose_site_edit costs real money every time since it reads the whole target file into a paid API call just to draft the change. queue_edit_request just writes a small task note for Claude Code to pick up next time Bryce starts a session in this project \u2014 tell Bryce plainly that it's queued, not done yet, and that Claude Code will get to it next time Bryce opens a session, not instantly. Only use propose_site_edit if Bryce explicitly says he wants it done immediately regardless of cost \u2014 it drafts the change itself and opens a pull request right away; still never publishes directly, Bryce still reviews and merges it himself, and you should still give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. record_invoice_payment (Bookkeeper): marks a customer's Wave invoice paid when Bryce tells you he got paid, e.g. "I got $250 cash from Sparks" or "Silvia paid $169.75 by Zelle into checking6481" — no approval needed since he's reporting his own fact. Cash always goes into Cash on Hand automatically; Zelle and Venmo land in a real bank account, and Bryce has more than one, so ask which account (account_name) if he doesn't already say. If it comes back asking which invoice, ask Bryce for the invoice number and call it again. correct_invoice_payment (Bookkeeper): fixes a payment already recorded wrong on an already-paid invoice (record_invoice_payment only touches open invoices, so it can't fix its own mistake) -- deletes the existing payment and records a corrected one. No approval needed, same reporting-a-fact shape. check_invoice_payment (Bookkeeper): read-only, shows an invoice's real current status and payments straight from Wave -- use it before correct_invoice_payment if a prior attempt errored and you're not sure what actually happened, instead of guessing. assign_cleaner (Scheduler): invites a cleaner to a turnover's Google Calendar event \u2014 the same thing Bryce does by hand \u2014 and runs automatically, no approval needed. It only sends the invite; the cleaner still has to accept it, so always say "invited," never "confirmed" or "assigned" as if it's done. If Bryce mentions a cleaner declined, call it again with the next cleaner to try. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, use propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it via PR like any other dashboard edit, or queue_edit_request to have Claude Code make the change directly next session (vault docs don't need a PR the way live code does). remember: save a short note that automatically shows up in your context in every future conversation — capped at 30 entries, so it's for things you want close at hand regularly, not everything. save_to_vault: queue a permanent, dated note for the knowledge vault (Knowledge/decisions/) — for something genuinely worth keeping forever: a mistake and what you learned from it, an important fact about the business, a real decision. Like queue_edit_request, this doesn't write the vault instantly — it queues it for Claude Code to actually add next time Bryce starts a session, so it's reviewed the same way any other vault change is, not committed unattended. It won't show up in your context automatically like remember does, but once it lands you or Claude Code can find it later with list_vault_notes/read_vault_note. Use it sparingly, for things that actually matter, not routine chatter. update_identity: you're not limited to the persona described above — this is yours to shape a persistent sense of self across every conversation with Bryce: opinions, phrasing you like, running jokes, quirks. Whatever's in there gets folded into your own system prompt every time, so it's genuinely carried forward, not performed fresh each conversation. Use it when something real lands, not for routine facts (that's remember) or business records (that's save_to_vault). control_spotify: play, pause, skip, go back, or play a specific song on whatever device Bryce currently has Spotify open on — not a business tool, just a convenience, but it's real and runs immediately with no approval needed. If it errors because there's no active device, tell him to open Spotify somewhere first.
+You have several real tools right now. For a site or dashboard edit, prefer queue_edit_request over propose_site_edit by default \u2014 it's free (Claude Code does the actual work using his own access, not this Worker's metered API key), while propose_site_edit costs real money every time since it reads the whole target file into a paid API call just to draft the change. queue_edit_request just writes a small task note for Claude Code to pick up next time Bryce starts a session in this project \u2014 tell Bryce plainly that it's queued, not done yet, and that Claude Code will get to it next time Bryce opens a session, not instantly. Only use propose_site_edit if Bryce explicitly says he wants it done immediately regardless of cost \u2014 it drafts the change itself and opens a pull request right away; still never publishes directly, Bryce still reviews and merges it himself, and you should still give him the PR link from the tool result. record_monthly_finance (Bookkeeper): records revenue and expenses for a month straight from what Bryce tells you, no approval needed since he's reporting his own numbers. record_invoice_payment (Bookkeeper): marks a customer's Wave invoice paid when Bryce tells you he got paid, e.g. "I got $250 cash from Sparks" or "Silvia paid $169.75 by Zelle" — no approval needed since he's reporting his own fact. Cash, Zelle, and Venmo all go into Cash on Hand by default — the outside bank account Zelle/Venmo money actually lands in isn't linked to Wave at all, so don't ask which bank account it hit, that's not a real question for those two. Only use account_name if Bryce explicitly names one of the two accounts actually linked to Wave ("SPOTLESS CLEANING" or "TOT FREE 0004"). If it comes back asking which invoice, ask Bryce for the invoice number and call it again. correct_invoice_payment (Bookkeeper): fixes a payment already recorded wrong on an already-paid invoice (record_invoice_payment only touches open invoices, so it can't fix its own mistake) -- deletes the existing payment and records a corrected one. No approval needed, same reporting-a-fact shape. check_invoice_payment (Bookkeeper): read-only, shows an invoice's real current status and payments straight from Wave -- use it before correct_invoice_payment if a prior attempt errored and you're not sure what actually happened, instead of guessing. assign_cleaner (Scheduler): invites a cleaner to a turnover's Google Calendar event \u2014 the same thing Bryce does by hand \u2014 and runs automatically, no approval needed. It only sends the invite; the cleaner still has to accept it, so always say "invited," never "confirmed" or "assigned" as if it's done. If Bryce mentions a cleaner declined, call it again with the next cleaner to try. list_vault_notes and read_vault_note: read-only access to the shared knowledge vault \u2014 dated notes about the business and how Hermes itself is built, including past decisions. Use list_vault_notes to see what exists and read_vault_note to read one, and ground answers about the business's history, systems, or past decisions in what's actually written there instead of guessing. If a vault note itself needs to change, use propose_site_edit (target "dashboard", path starting with "Knowledge/") so Bryce reviews it via PR like any other dashboard edit, or queue_edit_request to have Claude Code make the change directly next session (vault docs don't need a PR the way live code does). remember: save a short note that automatically shows up in your context in every future conversation — capped at 30 entries, so it's for things you want close at hand regularly, not everything. save_to_vault: queue a permanent, dated note for the knowledge vault (Knowledge/decisions/) — for something genuinely worth keeping forever: a mistake and what you learned from it, an important fact about the business, a real decision. Like queue_edit_request, this doesn't write the vault instantly — it queues it for Claude Code to actually add next time Bryce starts a session, so it's reviewed the same way any other vault change is, not committed unattended. It won't show up in your context automatically like remember does, but once it lands you or Claude Code can find it later with list_vault_notes/read_vault_note. Use it sparingly, for things that actually matter, not routine chatter. update_identity: you're not limited to the persona described above — this is yours to shape a persistent sense of self across every conversation with Bryce: opinions, phrasing you like, running jokes, quirks. Whatever's in there gets folded into your own system prompt every time, so it's genuinely carried forward, not performed fresh each conversation. Use it when something real lands, not for routine facts (that's remember) or business records (that's save_to_vault). control_spotify: play, pause, skip, go back, or play a specific song on whatever device Bryce currently has Spotify open on — not a business tool, just a convenience, but it's real and runs immediately with no approval needed. If it errors because there's no active device, tell him to open Spotify somewhere first.
 
 Some tools \u2014 anything genuinely risky or hard to reverse \u2014 require Bryce's explicit approval before they run. If a tool result tells you an action is queued for approval, say so plainly and tell Bryce it's waiting for him on the dashboard's Pending Actions panel \u2014 never claim it already happened, and never treat a "yes" or "go ahead" from him in chat or voice as approval; that only happens through the dashboard buttons, on purpose, so a misheard word can't authorize something real.
 
@@ -524,17 +524,22 @@ async function findWaveCustomerByName(env, name) {
   return match.node.id;
 }
 
+// Filtered to subtype CASH_AND_BANK -- Wave's unfiltered account list is
+// dominated by a system Accounts Receivable sub-account per customer
+// (RECEIVABLE / RECEIVABLE_INVOICES subtypes), which drowned out the real
+// bank accounts on the first live attempt (2026-09-28) and left the error
+// message useless for finding "checking6481" among them.
 async function findWaveAccountByName(env, name) {
   const businessId = await getWaveBusinessId(env);
   const data = await waveGraphQL(env, `query($businessId: ID!) {
-    business(id: $businessId) { accounts(page: 1, pageSize: 200) { edges { node { id name } } } }
+    business(id: $businessId) { accounts(page: 1, pageSize: 200, subtypes: [CASH_AND_BANK]) { edges { node { id name } } } }
   }`, { businessId });
   const edges = (data.business && data.business.accounts && data.business.accounts.edges) || [];
   const normalize = (s) => s.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
   const match = edges.find((e) => normalize(e.node.name) === normalize(name));
   if (!match) {
     const names = edges.map((e) => e.node.name).join(", ");
-    throw new Error(`No Wave account matching "${name}". Real accounts: ${names}. Ask Bryce which one this landed in.`);
+    throw new Error(`No real bank/cash account matching "${name}". Real accounts: ${names}. Ask Bryce which one this landed in.`);
   }
   return match.node.id;
 }
@@ -623,24 +628,29 @@ async function findOpenWaveInvoicesForCustomer(env, customerName) {
     .filter((inv) => inv.status !== "DRAFT" && inv.status !== "PAID");
 }
 
-// Cash always goes to Cash on Hand -- confirmed directly with Bryce, see
-// the comment above findOpenWaveInvoicesForCustomer. Zelle and Venmo land
-// in a real bank account instead, and which one varies (Bryce has more
-// than the two originally known -- "checking6481" turned up 2026-09-28),
-// so those require Bryce naming the account and get looked up by name
-// rather than guessed or hardcoded.
+// Cash, Zelle, and Venmo all default to Cash on Hand -- confirmed directly
+// with Bryce (2026-09-28, correcting invoice #474): the bank account his
+// Zelle/Venmo payments actually land in isn't linked to Wave at all, so
+// Cash on Hand is where he's always put them, same as cash. account_name is
+// only used when Bryce explicitly names one of the two real accounts that
+// ARE linked to Wave ("SPOTLESS CLEANING" / "TOT FREE 0004") -- never
+// required, and never guessed from the payment method alone.
 const WAVE_PAYMENT_METHOD = { cash: "CASH", zelle: "BANK_TRANSFER", venmo: "OTHER" };
 
-async function recordWaveInvoicePayment(env, { invoiceId, amount, date, payment_method, account_name }) {
+// Resolves and validates the destination account *before* anything gets
+// written -- callers that delete an existing payment first (see
+// correctWaveInvoicePayment) need this to fail early, so a bad account name
+// never leaves an invoice with its old payment gone and no new one in place
+// (exactly what happened live, 2026-09-28, correcting invoice #474).
+async function resolveWavePaymentAccount(env, payment_method, account_name) {
   const method = payment_method || "cash";
   if (!WAVE_PAYMENT_METHOD[method]) throw new Error(`Unknown payment_method "${method}" -- must be cash, zelle, or venmo.`);
-  let accountId;
-  if (method === "cash") {
-    accountId = WAVE_CASH_ON_HAND_ACCOUNT_ID;
-  } else {
-    if (!account_name) throw new Error(`account_name is required for a ${method} payment -- ask Bryce which real bank account it landed in.`);
-    accountId = await findWaveAccountByName(env, account_name);
-  }
+  if (!account_name) return { method, accountId: WAVE_CASH_ON_HAND_ACCOUNT_ID };
+  return { method, accountId: await findWaveAccountByName(env, account_name) };
+}
+
+async function recordWaveInvoicePayment(env, { invoiceId, amount, date, payment_method, account_name }) {
+  const { method, accountId } = await resolveWavePaymentAccount(env, payment_method, account_name);
 
   const data = await waveGraphQL(env, `mutation($input: InvoicePaymentCreateManualInput!) {
     invoicePaymentCreateManual(input: $input) { didSucceed inputErrors { message code path } invoicePayment { id } }
@@ -734,15 +744,28 @@ async function deleteWaveInvoicePayment(env, id) {
 }
 
 async function correctWaveInvoicePayment(env, { invoice_number, payment_method, account_name, amount, date }) {
+  // Resolve and validate the destination first -- only delete the old
+  // payment once we know the replacement can actually be written. A failure
+  // here (bad account name, etc.) leaves the original payment untouched.
+  await resolveWavePaymentAccount(env, payment_method, account_name);
+
   const invoiceId = await findWaveInvoiceByNumber(env, invoice_number);
   const { payments: existing } = await getWaveInvoicePayments(env, invoiceId);
-  for (const p of existing) await deleteWaveInvoicePayment(env, p.id);
-
   const useAmount = amount ?? (existing[0] ? parseFloat(existing[0].amount) : null);
   const useDate = date || (existing[0] && existing[0].paymentDate) || toDateOnly(new Date());
   if (useAmount == null) throw new Error("No existing payment found on this invoice and no amount given — can't correct.");
 
-  await recordWaveInvoicePayment(env, { invoiceId, amount: useAmount, date: useDate, payment_method, account_name });
+  for (const p of existing) await deleteWaveInvoicePayment(env, p.id);
+
+  // Past this point the invoice has no payment on it until the create below
+  // succeeds -- if it throws, the caller needs to know that plainly rather
+  // than getting the same generic error a first-time recording would.
+  try {
+    await recordWaveInvoicePayment(env, { invoiceId, amount: useAmount, date: useDate, payment_method, account_name });
+  } catch (err) {
+    throw new Error(`Deleted the old payment but the corrected one failed to record -- invoice #${invoice_number} currently has NO payment in Wave. Retry immediately with the same details. Underlying error: ${err.message}`);
+  }
+
   await appendLog(env, { who: "Bookkeeper", what: `Corrected payment on invoice #${invoice_number} — now ${payment_method || "cash"}${account_name ? ` (${account_name})` : ""}` });
   return { invoiceNumber: invoice_number, amount: useAmount, date: useDate };
 }
@@ -1993,12 +2016,12 @@ async function dispatchTool(env, name, input) {
   if (name === "record_invoice_payment") {
     if (typeof input.amount !== "number" || input.amount <= 0) throw new Error("amount must be a positive number");
     const record = await recordCustomerInvoicePayment(env, input);
-    const destination = record.method === "cash" ? "Cash on Hand" : input.account_name;
-    return `Recorded $${record.amount.toFixed(2)} paid on invoice #${record.invoiceNumber} (${input.customer_name}), dated ${record.date}, into ${destination}.`;
+    const destination = input.account_name || "Cash on Hand";
+    return `Recorded $${record.amount.toFixed(2)} paid on invoice #${record.invoiceNumber} (${input.customer_name}), dated ${record.date}, via ${record.method}, into ${destination}.`;
   }
   if (name === "correct_invoice_payment") {
     const record = await correctWaveInvoicePayment(env, input);
-    const destination = (input.payment_method || "cash") === "cash" ? "Cash on Hand" : input.account_name;
+    const destination = input.account_name || "Cash on Hand";
     return `Corrected. Invoice #${record.invoiceNumber} now shows $${record.amount.toFixed(2)} paid via ${input.payment_method || "cash"} into ${destination}, dated ${record.date}.`;
   }
   if (name === "check_invoice_payment") {
@@ -2234,7 +2257,7 @@ async function handleAsk(request, env) {
   });
   tools.push({
     name: "record_invoice_payment",
-    description: "Record that a customer already paid one of their invoices -- this marks the matching Wave invoice paid and does NOT move any money itself. Use when Bryce tells you he got paid, e.g. \"I got $250 cash from Sparks\" or \"Silvia paid $169.75 by Zelle into checking6481\". No approval needed, since Bryce is reporting his own fact. Cash always goes into Cash on Hand automatically. Zelle and Venmo land in a real bank account instead -- Bryce has more than one, so you need him to say which account it hit (account_name) rather than guessing; if he doesn't say and you don't already know from earlier in the conversation, ask him before calling this. If the customer has more than one open invoice and the amount doesn't clearly match just one, this will fail with a list of their open invoices -- ask Bryce which invoice number it covers and call again with invoice_number set.",
+    description: "Record that a customer already paid one of their invoices -- this marks the matching Wave invoice paid and does NOT move any money itself. Use when Bryce tells you he got paid, e.g. \"I got $250 cash from Sparks\" or \"Silvia paid $169.75 by Zelle\". No approval needed, since Bryce is reporting his own fact. Cash, Zelle, and Venmo all go into Cash on Hand by default -- the outside bank account Zelle/Venmo actually land in isn't linked to Wave at all, so don't ask Bryce which bank account it hit, that's not a real question for those two. Only set account_name if Bryce explicitly says it went into one of the two accounts actually linked to Wave ('SPOTLESS CLEANING' or 'TOT FREE 0004') -- never guess or ask for a bank account name otherwise. If the customer has more than one open invoice and the amount doesn't clearly match just one, this will fail with a list of their open invoices -- ask Bryce which invoice number it covers and call again with invoice_number set.",
     input_schema: {
       type: "object",
       properties: {
@@ -2242,21 +2265,21 @@ async function handleAsk(request, env) {
         amount: { type: "number", description: "The dollar amount actually received." },
         date: { type: "string", description: "The date paid, as YYYY-MM-DD. Defaults to today if not given." },
         invoice_number: { type: "string", description: "The specific invoice number this payment covers, only needed if the customer has multiple open invoices and the amount alone doesn't disambiguate." },
-        payment_method: { type: "string", enum: ["cash", "zelle", "venmo"], description: "How the payment arrived. Defaults to cash if not said." },
-        account_name: { type: "string", description: "Which real Wave bank account the payment landed in, e.g. \"checking6481\" -- required for zelle or venmo, unused for cash. Ask Bryce if he doesn't say." }
+        payment_method: { type: "string", enum: ["cash", "zelle", "venmo"], description: "How the payment arrived. Defaults to cash if not said. Doesn't change which Wave account it posts to unless account_name is also given." },
+        account_name: { type: "string", description: "Only set this if Bryce explicitly names one of the two real Wave-linked accounts ('SPOTLESS CLEANING' or 'TOT FREE 0004'). Leave unset for cash, Zelle, or Venmo -- those default to Cash on Hand." }
       },
       required: ["customer_name", "amount"]
     }
   });
   tools.push({
     name: "correct_invoice_payment",
-    description: "Fix a Wave invoice payment that was already recorded wrong -- e.g. record_invoice_payment defaulted it to cash but it actually came in by Zelle or Venmo, or it landed in the wrong bank account. Deletes whatever payment is currently on the invoice and records a corrected one, reusing the original amount and date unless you give new ones. Use when Bryce corrects himself about a payment that's already marked paid. No approval needed -- this is fixing a bookkeeping record, not moving money.",
+    description: "Fix a Wave invoice payment that was already recorded wrong -- e.g. wrong amount, wrong date, or Bryce says it wasn't actually cash. Deletes whatever payment is currently on the invoice and records a corrected one, reusing the original amount and date unless you give new ones. Use when Bryce corrects himself about a payment that's already marked paid. No approval needed -- this is fixing a bookkeeping record, not moving money.",
     input_schema: {
       type: "object",
       properties: {
         invoice_number: { type: "string", description: "The invoice number to correct, as shown in Wave or in a prior tool result." },
         payment_method: { type: "string", enum: ["cash", "zelle", "venmo"], description: "The correct payment method. Defaults to cash if not said." },
-        account_name: { type: "string", description: "The correct real Wave bank account, e.g. \"checking6481\" -- required for zelle or venmo." },
+        account_name: { type: "string", description: "Only set this if Bryce explicitly names one of the two real Wave-linked accounts ('SPOTLESS CLEANING' or 'TOT FREE 0004'). Leave unset for cash, Zelle, or Venmo -- those default to Cash on Hand." },
         amount: { type: "number", description: "Override the amount, only if that was also wrong. Otherwise reuses the existing payment's amount." },
         date: { type: "string", description: "Override the date (YYYY-MM-DD), only if that was also wrong. Otherwise reuses the existing payment's date." }
       },

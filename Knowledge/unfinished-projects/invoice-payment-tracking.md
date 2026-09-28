@@ -18,14 +18,19 @@ Zelle payments matched automatically with no reporting needed at all.
 ## Done: reported payments (cash, Zelle, Venmo)
 
 `record_invoice_payment` Deja tool (`src/index.js`) -- Bryce says "I got
-$250 cash from Sparks" or "Silvia paid $169.75 by Zelle into checking6481,"
-Deja finds the matching open Wave invoice and marks it paid. Cash always
-posts into **Cash on Hand** (confirmed directly with Bryce and in Wave's
-own "Record a manual payment" UI); Zelle/Venmo post into whichever real
-bank account Bryce names, looked up by name via `findWaveAccountByName`
-rather than hardcoded -- Bryce has more real accounts than the two
-originally known ("SPOTLESS CLEANING (694)" and "TOT FREE 0004 (301)");
-"checking6481" turned up 2026-09-28 recording the Silvia payment below.
+$250 cash from Sparks" or "Silvia paid $169.75 by Zelle," Deja finds the
+matching open Wave invoice and marks it paid. **Cash, Zelle, and Venmo all
+post into Cash on Hand by default** -- confirmed directly with Bryce
+2026-09-28: the outside bank account his Zelle/Venmo payments land in
+("checking...6481") isn't linked to Wave at all, so he's always put those
+in Cash on Hand too, same as cash. `account_name` (looked up via
+`findWaveAccountByName`) is only used when Bryce explicitly names one of
+the two accounts that *are* actually linked to Wave -- "SPOTLESS CLEANING
+(694)" or "TOT FREE 0004 (301)" -- never inferred from the payment method.
+An earlier version of this tool wrongly assumed Zelle/Venmo always needed
+a named bank account; see
+[[2026-09-28-correct-invoice-payment-left-invoice-unpaid]] for what that
+cost.
 
 Also added `correct_invoice_payment` for when a payment's already been
 marked paid with the wrong method/account -- deletes the existing Wave
