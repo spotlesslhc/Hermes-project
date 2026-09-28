@@ -85,6 +85,13 @@
   // uses the "Public Hostname" Access destination type instead, which does
   // support path-scoped policies, so Bryce can exempt just /webhooks/* here
   // while everything else on this hostname still requires Access.
+  // Adding "routes" without this explicitly set to true silently disabled
+  // the *.workers.dev address entirely on the very next deploy -- broke
+  // the live dashboard, the Turno Zap's webhook, and every other caller
+  // still pointed at hermes-project.spotlesscleaninglhc.workers.dev.
+  // Found and fixed 2026-09-28 -- see
+  // Knowledge/decisions/2026-09-28-custom-domain-disabled-workers-dev.md.
+  "workers_dev": true,
   "routes": [
     { "pattern": "hermes.spotlesslhc.com", "custom_domain": true }
   ],
