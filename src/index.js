@@ -524,17 +524,22 @@ async function findWaveCustomerByName(env, name) {
   return match.node.id;
 }
 
+// Filtered to subtype CASH_AND_BANK -- Wave's unfiltered account list is
+// dominated by a system Accounts Receivable sub-account per customer
+// (RECEIVABLE / RECEIVABLE_INVOICES subtypes), which drowned out the real
+// bank accounts on the first live attempt (2026-09-28) and left the error
+// message useless for finding "checking6481" among them.
 async function findWaveAccountByName(env, name) {
   const businessId = await getWaveBusinessId(env);
   const data = await waveGraphQL(env, `query($businessId: ID!) {
-    business(id: $businessId) { accounts(page: 1, pageSize: 200) { edges { node { id name } } } }
+    business(id: $businessId) { accounts(page: 1, pageSize: 200, subtypes: [CASH_AND_BANK]) { edges { node { id name } } } }
   }`, { businessId });
   const edges = (data.business && data.business.accounts && data.business.accounts.edges) || [];
   const normalize = (s) => s.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
   const match = edges.find((e) => normalize(e.node.name) === normalize(name));
   if (!match) {
     const names = edges.map((e) => e.node.name).join(", ");
-    throw new Error(`No Wave account matching "${name}". Real accounts: ${names}. Ask Bryce which one this landed in.`);
+    throw new Error(`No real bank/cash account matching "${name}". Real accounts: ${names}. Ask Bryce which one this landed in.`);
   }
   return match.node.id;
 }
@@ -631,16 +636,21 @@ async function findOpenWaveInvoicesForCustomer(env, customerName) {
 // rather than guessed or hardcoded.
 const WAVE_PAYMENT_METHOD = { cash: "CASH", zelle: "BANK_TRANSFER", venmo: "OTHER" };
 
-async function recordWaveInvoicePayment(env, { invoiceId, amount, date, payment_method, account_name }) {
+// Resolves and validates the destination account *before* anything gets
+// written -- callers that delete an existing payment first (see
+// correctWaveInvoicePayment) need this to fail early, so a bad account name
+// never leaves an invoice with its old payment gone and no new one in place
+// (exactly what happened live, 2026-09-28, correcting invoice #474).
+async function resolveWavePaymentAccount(env, payment_method, account_name) {
   const method = payment_method || "cash";
   if (!WAVE_PAYMENT_METHOD[method]) throw new Error(`Unknown payment_method "${method}" -- must be cash, zelle, or venmo.`);
-  let accountId;
-  if (method === "cash") {
-    accountId = WAVE_CASH_ON_HAND_ACCOUNT_ID;
-  } else {
-    if (!account_name) throw new Error(`account_name is required for a ${method} payment -- ask Bryce which real bank account it landed in.`);
-    accountId = await findWaveAccountByName(env, account_name);
-  }
+  if (method === "cash") return { method, accountId: WAVE_CASH_ON_HAND_ACCOUNT_ID };
+  if (!account_name) throw new Error(`account_name is required for a ${method} payment -- ask Bryce which real bank account it landed in.`);
+  return { method, accountId: await findWaveAccountByName(env, account_name) };
+}
+
+async function recordWaveInvoicePayment(env, { invoiceId, amount, date, payment_method, account_name }) {
+  const { method, accountId } = await resolveWavePaymentAccount(env, payment_method, account_name);
 
   const data = await waveGraphQL(env, `mutation($input: InvoicePaymentCreateManualInput!) {
     invoicePaymentCreateManual(input: $input) { didSucceed inputErrors { message code path } invoicePayment { id } }
@@ -734,15 +744,28 @@ async function deleteWaveInvoicePayment(env, id) {
 }
 
 async function correctWaveInvoicePayment(env, { invoice_number, payment_method, account_name, amount, date }) {
+  // Resolve and validate the destination first -- only delete the old
+  // payment once we know the replacement can actually be written. A failure
+  // here (bad account name, etc.) leaves the original payment untouched.
+  await resolveWavePaymentAccount(env, payment_method, account_name);
+
   const invoiceId = await findWaveInvoiceByNumber(env, invoice_number);
   const { payments: existing } = await getWaveInvoicePayments(env, invoiceId);
-  for (const p of existing) await deleteWaveInvoicePayment(env, p.id);
-
   const useAmount = amount ?? (existing[0] ? parseFloat(existing[0].amount) : null);
   const useDate = date || (existing[0] && existing[0].paymentDate) || toDateOnly(new Date());
   if (useAmount == null) throw new Error("No existing payment found on this invoice and no amount given — can't correct.");
 
-  await recordWaveInvoicePayment(env, { invoiceId, amount: useAmount, date: useDate, payment_method, account_name });
+  for (const p of existing) await deleteWaveInvoicePayment(env, p.id);
+
+  // Past this point the invoice has no payment on it until the create below
+  // succeeds -- if it throws, the caller needs to know that plainly rather
+  // than getting the same generic error a first-time recording would.
+  try {
+    await recordWaveInvoicePayment(env, { invoiceId, amount: useAmount, date: useDate, payment_method, account_name });
+  } catch (err) {
+    throw new Error(`Deleted the old payment but the corrected one failed to record -- invoice #${invoice_number} currently has NO payment in Wave. Retry immediately with the same details. Underlying error: ${err.message}`);
+  }
+
   await appendLog(env, { who: "Bookkeeper", what: `Corrected payment on invoice #${invoice_number} — now ${payment_method || "cash"}${account_name ? ` (${account_name})` : ""}` });
   return { invoiceNumber: invoice_number, amount: useAmount, date: useDate };
 }
