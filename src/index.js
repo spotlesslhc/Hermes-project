@@ -1297,6 +1297,35 @@ async function getLog(env, limit = 30) {
   return log.slice(-limit).reverse();
 }
 
+// ---- Deja's own memory: small, curated, cheap to inject ------------------
+//
+// Not a transcript store — /api/ask is stateless per request (the dashboard
+// never sends prior turns back), so without this Deja forgets everything
+// the moment a reply is sent. Rather than replaying raw history (expensive,
+// and mixes in a lot of noise), Deja calls the "remember" tool herself only
+// when Bryce states something worth keeping, and every entry gets folded
+// into the system prompt on the next request — same KV-list-with-a-cap
+// pattern as activity_log above, just a much smaller cap since this rides
+// along on every single call instead of only /api/log.
+const DEJA_MEMORY_KEY = "deja_memory";
+const DEJA_MEMORY_MAX_ENTRIES = 30;
+const DEJA_MEMORY_MAX_CHARS = 220;
+
+async function getDejaMemory(env) {
+  const raw = await env.HERMES_KV.get(DEJA_MEMORY_KEY);
+  return raw ? JSON.parse(raw) : [];
+}
+
+async function rememberForDeja(env, text) {
+  const note = text.toString().trim().slice(0, DEJA_MEMORY_MAX_CHARS);
+  if (!note) throw new Error("Nothing to remember — text was empty");
+  const memory = await getDejaMemory(env);
+  memory.push({ date: new Date().toISOString().slice(0, 10), text: note });
+  const trimmed = memory.slice(-DEJA_MEMORY_MAX_ENTRIES);
+  await env.HERMES_KV.put(DEJA_MEMORY_KEY, JSON.stringify(trimmed));
+  return trimmed;
+}
+
 async function json(data, init = {}) {
   return new Response(JSON.stringify(data), {
     ...init,
@@ -1808,6 +1837,10 @@ async function dispatchTool(env, name, input) {
     const record = await recordCustomerInvoicePayment(env, input);
     return `Recorded $${record.amount.toFixed(2)} paid on invoice #${record.invoiceNumber} (${input.customer_name}), dated ${record.date}, into Cash on Hand.`;
   }
+  if (name === "remember") {
+    await rememberForDeja(env, input.text);
+    return "Remembered — this will carry into future conversations automatically.";
+  }
   if (name === "list_vault_notes") {
     const files = await listVaultNotes(env);
     return files.length ? files.join("\n") : "No notes found in Knowledge/.";
@@ -1916,6 +1949,15 @@ async function handleAsk(request, env) {
       }
     });
   }
+  tools.push({
+    name: "remember",
+    description: "Save one short, durable fact so it automatically carries into every future conversation — without Bryce having to repeat it. Use this when he states a preference, makes a decision, or mentions a recurring fact worth keeping (not routine chatter, and not anything already covered by a dedicated tool like record_monthly_finance). No approval needed. Keep it to one clear sentence — it gets trimmed to 220 characters.",
+    input_schema: {
+      type: "object",
+      properties: { text: { type: "string", description: "The fact to remember, as one short sentence." } },
+      required: ["text"]
+    }
+  });
   tools.push({
     name: "list_vault_notes",
     description: "List every note in the shared Obsidian knowledge vault (Knowledge/ in the dashboard repo) — how the business and Hermes system actually work, plus dated decision records. Returns a list of file paths. Use this before read_vault_note if you don't already know the exact path.",
@@ -2026,6 +2068,11 @@ async function handleAsk(request, env) {
     });
   }
 
+  const memory = await getDejaMemory(env);
+  const system = memory.length
+    ? `${HERMES_SYSTEM_PROMPT}\n\n## What you remember from past conversations\n${memory.map((m) => `- (${m.date}) ${m.text}`).join("\n")}\n\nUse the remember tool to add to this list when Bryce states something worth keeping.`
+    : HERMES_SYSTEM_PROMPT;
+
   const messages = [{ role: "user", content: message }];
   let reply = "";
   let toolFailed = false;
@@ -2041,7 +2088,7 @@ async function handleAsk(request, env) {
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 1500,
-        system: HERMES_SYSTEM_PROMPT,
+        system,
         messages,
         ...(tools ? { tools } : {})
       })
