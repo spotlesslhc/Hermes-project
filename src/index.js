@@ -1365,11 +1365,21 @@ async function runDailyCleanTextCheck(env) {
   const data = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events?${params}`);
   const events = (data.items || []).filter((e) => e.status !== "cancelled");
   const roster = await getCleanerRoster(env);
+  const cleanerEmails = new Set(Object.values(roster));
 
   const due = [];
   for (const event of events) {
     const dateOnly = (event.start?.dateTime || event.start?.date || "").slice(0, 10);
-    const accepted = (event.attendees || []).find((a) => a.responseStatus === "accepted");
+    // Only attendees actually in the roster count as a real cleaner signal.
+    // Bryce's own account (spotlesscleaninglhc@gmail.com) shows up as an
+    // attendee on every event -- a side effect of manually sharing his
+    // calendar in the past -- and Google auto-marks the organizer/sharer as
+    // "accepted", which was silently making every cleaning look staffed to
+    // this check even when no real cleaner had ever been invited. Caught
+    // 2026-09-28 when Bryce noticed unassigned cleanings weren't triggering
+    // invites; see Knowledge/decisions/2026-09-28-spotlesscleaninglhc-attendee-bug.md.
+    const cleanerAttendees = (event.attendees || []).filter((a) => cleanerEmails.has(a.email));
+    const accepted = cleanerAttendees.find((a) => a.responseStatus === "accepted");
 
     if (accepted) {
       const flagKey = `cleaning_texted:${event.id}`;
@@ -1388,10 +1398,10 @@ async function runDailyCleanTextCheck(env) {
 
     // Someone's already invited and hasn't answered yet -- wait, don't pile
     // a second invite on top.
-    const pending = (event.attendees || []).find((a) => a.responseStatus !== "declined" && a.responseStatus !== "accepted");
+    const pending = cleanerAttendees.find((a) => a.responseStatus !== "declined" && a.responseStatus !== "accepted");
     if (pending) continue;
 
-    const tried = new Set((event.attendees || []).map((a) => a.email));
+    const tried = new Set(cleanerAttendees.map((a) => a.email));
     const nextName = cascade.find((name) => !tried.has(roster[name]));
     if (!nextName) {
       await alertOnceForEvent(env, event, `${event.summary} on ${dateOnly} -- nobody in the cascade is available and this can't be postponed. Needs manual attention.`);
