@@ -1,5 +1,6 @@
 node_modules/
 .wrangler/
 tools/deja-bridge/.env.local
+tools/sms-batch/.env.local
 .obsidian/
 .claude/settings.local.json
