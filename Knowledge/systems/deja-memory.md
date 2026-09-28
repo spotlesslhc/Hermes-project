@@ -76,3 +76,30 @@ function `queue_edit_request` calls) to write a task file into
 `Knowledge/tasks/` asking Claude Code to actually add the note next
 session — reviewed the same way any other vault change is, nothing
 committed unattended.
+
+## `update_identity` — a persistent self, added 2026-09-28
+
+Same day: Bryce said giving Deja memory was really an attempt at giving
+her "her own personality," and that `remember` (facts, capped, generic)
+wasn't that. `update_identity` is the actual answer — one piece of
+free-form prose in `HERMES_KV` under `deja_identity` (capped at 4000
+chars), written and rewritten by Deja herself: opinions she's formed, how
+she likes to talk to Bryce, running jokes, quirks. Folded into her system
+prompt every request exactly like `remember`'s list is, so it's carried
+forward rather than reconstructed from scratch each conversation.
+
+Deliberately **not** append-only like `remember`. Deja already sees her
+current identity note in her own context every request (it's injected
+right there in the system prompt), so `update_identity` takes the whole
+rewritten text rather than a diff or an addition — she edits, reorganizes,
+and compresses it herself as it grows, the same way a person's sense of
+self isn't a running transcript either. No approval needed and nothing
+routes through GitHub — same trust level as `remember`, which already
+sets the precedent that unreviewed KV writes shaping her own prompt are
+fine; the save_to_vault concern above was specifically about unsupervised
+*git commits*, not about Deja managing her own KV state.
+
+**Not written to the vault.** Same reasoning as `remember` — this is meant
+to be cheap and self-directed, not a reviewed artifact. If Bryce wants a
+durable, human-readable snapshot of who Deja currently is, she can write
+one into `Knowledge/decisions/` herself with `save_to_vault`.
