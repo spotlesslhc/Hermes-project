@@ -1131,6 +1131,16 @@ async function runWeeklyPayrollCheck(env) {
     ? `Weekly payroll ready — ${owedLines.join("; ")}. Bring Claude online to send it (Bryce confirms each payment in his own browser).`
     : "Weekly payroll check: nothing owed to any cleaner right now.";
   await appendLog(env, { who: "Bookkeeper", what });
+
+  // Also nudge Bryce on Telegram so he can pay from his phone. Notes use "-"
+  // not "/" because Zelle (Foothills) rejects slashes; Venmo is fine with it.
+  // Never sends money -- Bryce taps Send himself, then records it (dashboard
+  // or "I paid Amy $X" to Deja).
+  const owed = Object.values(summaries).filter((s) => s.owed > 0);
+  if (owed.length) {
+    const lines = owed.map((s) => `${s.cleaner}: $${s.owed.toFixed(2)}\nNote: ${s.paymentNote.replaceAll("/", "-")}`);
+    await sendTelegramMessage(env, `💵 Cleaner payroll ready\n\n${lines.join("\n\n")}\n\nAfter you send it, tell Deja "I paid <name> $<amount>".`);
+  }
 }
 
 // The dashboard labels this counter "Errors this week", so it needs an
@@ -1432,7 +1442,18 @@ async function runDailyCleanTextCheck(env) {
     // Someone's already invited and hasn't answered yet -- wait, don't pile
     // a second invite on top.
     const pending = cleanerAttendees.find((a) => a.responseStatus !== "declined" && a.responseStatus !== "accepted");
-    if (pending) continue;
+    if (pending) {
+      // Silence never advances the cascade, so alert Bryce once if an invite
+      // sits unanswered 48h. The flag holds the invite time (older flags just
+      // hold "1" -- treat those as unknown and start the clock now).
+      const flagKey = `cleaning_invited:${event.id}:${pending.email}`;
+      const invitedAt = Number(await env.HERMES_KV.get(flagKey));
+      if (invitedAt < 1e12) await env.HERMES_KV.put(flagKey, String(Date.now()));
+      else if (Date.now() - invitedAt > 48 * 3600 * 1000) {
+        await alertOnceForEvent(env, event, `${event.summary} on ${dateOnly} -- invite to ${pending.email} unanswered for 48h. Text or reassign manually.`);
+      }
+      continue;
+    }
 
     const tried = new Set(cleanerAttendees.map((a) => a.email));
     const nextName = cascade.find((name) => !tried.has(roster[name]));
@@ -1448,7 +1469,7 @@ async function runDailyCleanTextCheck(env) {
     if (await env.HERMES_KV.get(inviteFlagKey)) continue; // Already texted; waiting on their reply.
 
     const updated = await inviteCleanerToEvent(env, calendarId, event, candidateEmail);
-    await env.HERMES_KV.put(inviteFlagKey, "1");
+    await env.HERMES_KV.put(inviteFlagKey, String(Date.now()));
     due.push({ kind: "invite", eventId: event.id, cleaner: nextName, property: event.summary, date: dateOnly, eventLink: updated.htmlLink });
   }
   if (!due.length) return;

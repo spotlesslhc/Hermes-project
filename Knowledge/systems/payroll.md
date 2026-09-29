@@ -69,7 +69,9 @@ Claude Code online, it handles the browser side and he just confirms.
 
 - A Cloudflare Cron Trigger (`triggers.crons` in `wrangler.jsonc`, Mondays
   8am `America/Phoenix`) runs `runWeeklyPayrollCheck`, which posts one
-  Activity log line summarizing what's owed to each cleaner. That's all
+  Activity log line summarizing what's owed to each cleaner. It also sends the same owed
+  amounts and a Zelle-safe note (dashes, not slashes) to Bryce on Telegram
+  (added 2026-09-29) so he can pay from his phone. That's all
   it does — no queue, no lock, no stored "pending run" state, because
   `owed` is already always computed live; there's nothing that could
   drift out of sync by not tracking it separately.
