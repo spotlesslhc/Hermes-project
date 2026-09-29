@@ -72,7 +72,8 @@ path-scoped policy, which the bare `*.workers.dev` address can't do
 
 - **Zac** isn't in the cleaner roster (no email on file) — can't be
   cascade-assigned or texted until added.
-- No escalation if an invited cleaner never responds (only an explicit
-  decline advances the cascade).
+- An invited cleaner who never responds doesn't advance the cascade (only
+  an explicit decline does), but Bryce now gets a one-time Telegram alert
+  after 48h of silence (added 2026-09-29).
 - Not yet proven against a real end-to-end cycle (real cleaning → real
   Telegram approval → real staged text) — watch the first few live days.
