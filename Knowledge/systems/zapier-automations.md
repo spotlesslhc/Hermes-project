@@ -94,6 +94,12 @@ for next time is in
    after the calendar change, or the step ends up with an empty
    required field.
 
+**v17 (2026-09-29):** step 18 (`reservation.changed` Delete Event) now has an
+error handler, and the create block is duplicated into its Error branch so a
+changed reservation with no existing clean still gets one. See
+[[decisions/2026-09-29-calendar-zap-delete-event-error-handler]] — the create
+logic now exists twice, edit both.
+
 ### 2. "Hospitable Reservations to Wave Invoices" (now v7, active)
 
 Triggered by a Catch Hook, fed by Zap #1's POST step. This one is much
