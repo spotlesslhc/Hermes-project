@@ -1299,6 +1299,11 @@ async function handleTelegramWebhook(request, env) {
   if (!message || chatId !== String(env.TELEGRAM_CHAT_ID)) return json({ ok: true });
 
   const text = (message.text || "").trim().toLowerCase();
+  // An open "move to the next cleaner?" question takes the reply first;
+  // otherwise it's for the (paused) text-approval batch below.
+  if ((text.startsWith("yes") || text.startsWith("no")) && (await answerAdvanceAsk(env, text.startsWith("yes")))) {
+    return json({ ok: true });
+  }
   if (text.startsWith("yes")) {
     const record = await resolveTelegramApproval(env, "yes");
     if (record) await sendTelegramMessage(env, "Got it — Claude will send those next time it checks in.");
@@ -1338,6 +1343,90 @@ async function alertOnceForEvent(env, event, message) {
   await env.HERMES_KV.put(key, "1");
   await sendTelegramMessage(env, `⚠️ ${message}`);
   await appendLog(env, { who: "Scheduler", what: message });
+}
+
+// ---- Unanswered invites: ask Bryce before moving to the next cleaner -----
+//
+// A cleaner who never accepts or declines doesn't advance the cascade on its
+// own. After 48h Bryce gets a Telegram question (details + who's next); "yes"
+// removes the silent cleaner from the event and invites the next one, "no"
+// keeps waiting. One open question at a time (stale after 24h); each
+// event/cleaner pair is only ever asked about once.
+const ADVANCE_ASK_KEY = "cleaning_advance_ask";
+
+async function getSkippedCleaners(env, eventId) {
+  return JSON.parse((await env.HERMES_KV.get(`cleaning_skipped:${eventId}`)) || "[]");
+}
+
+async function nextAvailableCleaner(env, calendarId, event, cascade, roster, dateOnly, cleanerAttendees) {
+  const tried = new Set([...cleanerAttendees.map((a) => a.email), ...(await getSkippedCleaners(env, event.id))]);
+  for (const name of cascade) {
+    const email = roster[name];
+    if (!email || tried.has(email)) continue;
+    if (!(await isCleanerBusyOnDate(env, calendarId, email, dateOnly))) return { name, email };
+  }
+  return null;
+}
+
+async function askToAdvanceCleaner(env, calendarId, event, cascade, roster, dateOnly, cleanerAttendees, pending) {
+  const askedKey = `cleaning_advance_asked:${event.id}:${pending.email}`;
+  if (await env.HERMES_KV.get(askedKey)) return;
+  const open = JSON.parse((await env.HERMES_KV.get(ADVANCE_ASK_KEY)) || "null");
+  if (open && Date.now() - open.createdAt < 24 * 3600 * 1000) return; // Asked on a later run.
+
+  const nameFor = (email) => Object.entries(roster).find(([, e]) => e === email)?.[0] || email;
+  const next = await nextAvailableCleaner(env, calendarId, event, cascade, roster, dateOnly, cleanerAttendees);
+  if (!next) {
+    await alertOnceForEvent(env, event, `${event.summary} on ${dateOnly} -- ${nameFor(pending.email)} hasn't answered in 48h and nobody else in the cascade is available. Needs manual attention.`);
+    return;
+  }
+  const pay = parsePayFromDescription(event.description);
+  await env.HERMES_KV.put(askedKey, "1");
+  await env.HERMES_KV.put(ADVANCE_ASK_KEY, JSON.stringify({
+    eventId: event.id, pendingEmail: pending.email, property: event.summary, date: dateOnly, createdAt: Date.now()
+  }));
+  await sendTelegramMessage(
+    env,
+    `⏰ ${event.summary} on ${dateOnly}${pay ? ` (pay $${pay})` : ""}: ${nameFor(pending.email)} was invited over 48h ago and hasn't accepted or declined.\n\nNext in line: ${next.name}.\nReply yes to remove ${nameFor(pending.email)} and invite ${next.name}, or no to keep waiting.`
+  );
+  await appendLog(env, { who: "Scheduler", what: `Asked Bryce on Telegram whether to move ${event.summary} ${dateOnly} from ${nameFor(pending.email)} to ${next.name} (48h no response)` });
+}
+
+// Returns true if there was an open question this reply answered.
+async function answerAdvanceAsk(env, yes) {
+  const ask = JSON.parse((await env.HERMES_KV.get(ADVANCE_ASK_KEY)) || "null");
+  if (!ask) return false;
+  await env.HERMES_KV.delete(ADVANCE_ASK_KEY);
+  if (!yes) {
+    await sendTelegramMessage(env, `Okay — still waiting on ${ask.pendingEmail} for ${ask.property} ${ask.date}. I won't ask again about this one.`);
+    return true;
+  }
+
+  const calendarId = await getCleansCalendarId(env);
+  const event = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events/${ask.eventId}`);
+  const roster = await getCleanerRoster(env);
+  const cleanerEmails = new Set(Object.values(roster));
+  const cleanerAttendees = (event.attendees || []).filter((a) => cleanerEmails.has(a.email));
+  const current = cleanerAttendees.find((a) => a.email === ask.pendingEmail);
+  if (event.status === "cancelled" || !current || current.responseStatus === "accepted" || current.responseStatus === "declined") {
+    await sendTelegramMessage(env, `${ask.property} ${ask.date} changed since I asked (already answered, reassigned, or cancelled) — no changes made.`);
+    return true;
+  }
+
+  const cascade = getCascadeForCleaning(event.summary) || [];
+  const next = await nextAvailableCleaner(env, calendarId, event, cascade, roster, ask.date, cleanerAttendees);
+  if (!next) {
+    await sendTelegramMessage(env, `Nobody else in the cascade is available for ${ask.property} ${ask.date} — leaving ${ask.pendingEmail} on it. Needs manual attention.`);
+    return true;
+  }
+
+  await env.HERMES_KV.put(`cleaning_skipped:${ask.eventId}`, JSON.stringify([...(await getSkippedCleaners(env, ask.eventId)), ask.pendingEmail]));
+  await inviteCleanerToEvent(env, calendarId, { ...event, attendees: event.attendees.filter((a) => a.email !== ask.pendingEmail) }, next.email);
+  await env.HERMES_KV.put(`cleaning_invited:${ask.eventId}:${next.email}`, String(Date.now()));
+  const msg = `Moved ${ask.property} ${ask.date} from ${ask.pendingEmail} to ${next.name} (calendar invite sent).`;
+  await appendLog(env, { who: "Scheduler", what: msg });
+  await sendTelegramMessage(env, `✅ ${msg}`);
+  return true;
 }
 
 // Runs daily (see the "crons" trigger in wrangler.jsonc). Two things happen
@@ -1436,19 +1525,19 @@ async function runDailyCleanTextCheck(env) {
     // a second invite on top.
     const pending = cleanerAttendees.find((a) => a.responseStatus !== "declined" && a.responseStatus !== "accepted");
     if (pending) {
-      // Silence never advances the cascade, so alert Bryce once if an invite
-      // sits unanswered 48h. The flag holds the invite time (older flags just
-      // hold "1" -- treat those as unknown and start the clock now).
+      // Silence never advances the cascade on its own, so after 48h ask Bryce
+      // (askToAdvanceCleaner). The flag holds the invite time (older flags
+      // just hold "1" -- treat those as unknown and start the clock now).
       const flagKey = `cleaning_invited:${event.id}:${pending.email}`;
       const invitedAt = Number(await env.HERMES_KV.get(flagKey));
       if (invitedAt < 1e12) await env.HERMES_KV.put(flagKey, String(Date.now()));
       else if (Date.now() - invitedAt > 48 * 3600 * 1000) {
-        await alertOnceForEvent(env, event, `${event.summary} on ${dateOnly} -- invite to ${pending.email} unanswered for 48h. Text or reassign manually.`);
+        await askToAdvanceCleaner(env, calendarId, event, cascade, roster, dateOnly, cleanerAttendees, pending);
       }
       continue;
     }
 
-    const tried = new Set(cleanerAttendees.map((a) => a.email));
+    const tried = new Set([...cleanerAttendees.map((a) => a.email), ...(await getSkippedCleaners(env, event.id))]);
     const nextName = cascade.find((name) => !tried.has(roster[name]));
     if (!nextName) {
       await alertOnceForEvent(env, event, `${event.summary} on ${dateOnly} -- nobody in the cascade is available and this can't be postponed. Needs manual attention.`);

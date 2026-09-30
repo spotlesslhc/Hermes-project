@@ -15,6 +15,17 @@ updated: 2026-09-28
 > `createTelegramApproval` call in that function (see git history before this
 > change) and re-enable the `cleaner-text-3week-check` scheduled task. The
 > rest of this doc describes the paused design.
+>
+> **Unanswered invites (added 2026-09-29):** if an invited cleaner hasn't
+> accepted or declined after 48h, Bryce gets a Telegram question with the
+> clean's details and who's next in the cascade. "yes" removes the silent
+> cleaner from the event (Google sends them a removal notice) and invites the
+> next one; "no" keeps waiting and it never asks about that pair again. One
+> open question at a time (stale after 24h); a removed cleaner is remembered
+> in KV (`cleaning_skipped:<eventId>`) so the cascade never loops back to
+> them. Telegram replies "yes"/"no" go to this question first
+> (`answerAdvanceAsk`), then to the paused text-approval batch. If nobody
+> else is available Bryce gets a plain alert instead.
 
 Built 2026-09-27/28. Full build history and rejected alternatives (Twilio,
 Google-Voice-via-Deja-login) are in
