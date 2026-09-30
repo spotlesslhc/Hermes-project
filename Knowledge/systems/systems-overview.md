@@ -157,8 +157,6 @@ receive it. Four are bound right now:
 - **`GITHUB_TOKEN`** — lets the [[Site Editor Agent]] read files from and
   open pull requests against the website and dashboard repos. See
   [[site-editor]] for how it's used.
-- The marketing website (separate repo, Cloudflare Worker): see
-  [[spotlesslhc-website]].
 - **`WAVE_API_TOKEN`** — bound and active as of 2026-09-20. The Worker can
   authenticate to Wave and look up the business ID with it, but nothing
   reads financial data through it — Wave's public API turned out to have
@@ -228,3 +226,7 @@ that yet.
   gates nothing — none of Hermes' real tools are risky enough to
   need it. It's there for whenever a real risky tool (payments, calendar
   writes, anything hard to reverse) gets added.
+
+## Related
+
+- The marketing website (spotlesslhc.com, separate repo, Cloudflare Worker): [[spotlesslhc-website]].
