@@ -41,8 +41,23 @@ in the first build log before calling a static-assets config done; better
 still, put the site in a `public/` folder so the assets directory can't
 include repo internals.
 
-## Still to check before merging to `main`
+## Resolution and verified state (same day)
 
-- That spotlesslhc.com's custom domain is attached to this Worker.
-- That the production branch's deploy command is correct (branch builds use
-  `versions upload`).
+- Bryce added `.git`, `.wrangler`, `node_modules` to `.assetsignore` (commit
+  `b037f29`). The next build's preview serves only `index.html` and
+  `logo.webp`; `/.git/*`, `/wrangler.jsonc`, `/.assetsignore`, `/.wrangler/*`
+  all return 404. Verified with curl against the preview URLs.
+- **Pre-existing exposure:** the *live* site (version `a129c569`, created by an
+  earlier Cloudflare build on `main`, auto-generated config with
+  `assets.directory: "."`) already serves `/.git/HEAD`, `/.git/config`,
+  `/.git/index`, `/.git/refs/heads/main`, `/.gitignore` and `/wrangler.jsonc`
+  (HTTP 200). Checked: `.git/config` holds only the public repo URL, no
+  credentials; the repo is public. Low severity, but it disappears once a
+  version built from this config is deployed.
+- Production settings (Cloudflare → Worker → Settings): production branch
+  `main`, production deploy command `npx wrangler deploy`; non-production
+  branch builds stay on on `npx wrangler versions upload` (preview only). So
+  **merging to `main` deploys to spotlesslhc.com.** The live domain is served
+  by this Worker (the exposed files came from it).
+- Preview alias for the branch:
+  `https://site-mobile-nav-honeypot-logos-spotlesslhc-website.spotlesscleaninglhc.workers.dev`
