@@ -3,7 +3,7 @@ title: Cleaner text notifications — what's left
 tags: [scheduler, google-calendar, sms, google-voice, telegram]
 started: 2026-09-27
 updated: 2026-09-28
-status: live; see Knowledge/systems/cleaner-text-notifications.md for how it works
+status: PAUSED 2026-09-29 by Bryce — cleaners get calendar invite emails only; see Knowledge/systems/cleaner-text-notifications.md for how to resume
 ---
 
 # Cleaner text notifications — what's left

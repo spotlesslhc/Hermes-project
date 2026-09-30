@@ -1393,9 +1393,6 @@ async function getUpcomingCleaningStatus(env, lookaheadDays = 7) {
 }
 
 async function runDailyCleanTextCheck(env) {
-  const existing = await getCurrentTelegramApproval(env);
-  if (existing && existing.status === "pending") return;
-
   const calendarId = await getCleansCalendarId(env);
   const now = new Date();
   const params = new URLSearchParams({
@@ -1410,7 +1407,6 @@ async function runDailyCleanTextCheck(env) {
   const roster = await getCleanerRoster(env);
   const cleanerEmails = new Set(Object.values(roster));
 
-  const due = [];
   for (const event of events) {
     const dateOnly = (event.start?.dateTime || event.start?.date || "").slice(0, 10);
     // Only attendees actually in the roster count as a real cleaner signal.
@@ -1424,14 +1420,11 @@ async function runDailyCleanTextCheck(env) {
     const cleanerAttendees = (event.attendees || []).filter((a) => cleanerEmails.has(a.email));
     const accepted = cleanerAttendees.find((a) => a.responseStatus === "accepted");
 
-    if (accepted) {
-      const flagKey = `cleaning_texted:${event.id}`;
-      if (await env.HERMES_KV.get(flagKey)) continue;
-      const cleanerName = Object.entries(roster).find(([, email]) => email === accepted.email)?.[0] || accepted.email;
-      due.push({ kind: "reminder", eventId: event.id, cleaner: cleanerName, property: event.summary, date: dateOnly });
-      await env.HERMES_KV.put(flagKey, "1");
-      continue;
-    }
+    // Texting is paused (2026-09-29): no reminder texts, cleaners are only
+    // invited via the calendar (Google emails the invite). To resume, restore
+    // the reminder push here, collect `due` items, and call
+    // createTelegramApproval(env, due) at the end (see git history).
+    if (accepted) continue;
 
     const cascade = getCascadeForCleaning(event.summary);
     if (!cascade) {
@@ -1468,13 +1461,10 @@ async function runDailyCleanTextCheck(env) {
     const inviteFlagKey = `cleaning_invited:${event.id}:${candidateEmail}`;
     if (await env.HERMES_KV.get(inviteFlagKey)) continue; // Already texted; waiting on their reply.
 
-    const updated = await inviteCleanerToEvent(env, calendarId, event, candidateEmail);
+    await inviteCleanerToEvent(env, calendarId, event, candidateEmail);
     await env.HERMES_KV.put(inviteFlagKey, String(Date.now()));
-    due.push({ kind: "invite", eventId: event.id, cleaner: nextName, property: event.summary, date: dateOnly, eventLink: updated.htmlLink });
+    await appendLog(env, { who: "Scheduler", what: `Invited ${nextName} to ${event.summary} on ${dateOnly} (calendar email only, texting paused).` });
   }
-  if (!due.length) return;
-
-  await createTelegramApproval(env, due);
 }
 
 // ---- KV helpers ---------------------------------------------------------

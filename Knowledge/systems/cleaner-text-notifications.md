@@ -6,6 +6,16 @@ updated: 2026-09-28
 
 # Cleaner text notifications — 3-week reminders and cascade auto-invite
 
+> **PAUSED 2026-09-29 (Bryce's call, while traveling).** `runDailyCleanTextCheck`
+> no longer sends reminders or queues texts/Telegram approvals. It still runs
+> daily: it invites the next cascade cleaner to any unstaffed clean in the next
+> 3 weeks via the calendar (Google emails the invite), sends the Telegram
+> alerts for stuck cleans and 48h-unanswered invites, and logs each invite to
+> Activity. To resume texting, restore the reminder push and the
+> `createTelegramApproval` call in that function (see git history before this
+> change) and re-enable the `cleaner-text-3week-check` scheduled task. The
+> rest of this doc describes the paused design.
+
 Built 2026-09-27/28. Full build history and rejected alternatives (Twilio,
 Google-Voice-via-Deja-login) are in
 [[unfinished-projects/cleaner-sms-3week-notifications]] if ever needed —
