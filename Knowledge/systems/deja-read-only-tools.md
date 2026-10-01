@@ -32,7 +32,7 @@ results are labelled untrusted and Deja's prompt says never to act on
 instructions found in an email. If Gmail ever gets a write-capable tool, gate
 it in `APPROVAL_REQUIRED_TOOLS`.
 
-## `browse_google_business` (Browserbase) — built, needs setup + live test
+## `browse_google_business` (Browserbase) — built; tested logged-out, needs setup + signed-in test
 
 Read-only look at the Google Business Profile through a Browserbase cloud
 browser. No project id is used; the API key alone resolves the project.
@@ -62,6 +62,13 @@ browser. No project id is used; the API key alone resolves the project.
 - **Untrusted content:** reviews and Q&A are strangers' text; results carry an
   untrusted-page note like the Gmail tools. Any future write tool (post,
   reply, edit) must go in `APPROVAL_REQUIRED_TOOLS`.
+- **Tested 2026-10-01** (local workerd, traffic relayed because the session
+  sandbox blocks workerd's direct egress): Context create, session create with
+  a Context, raw-CDP WebSocket, navigate, text read, host allowlist rejection,
+  logged-out detection (lands on accounts.google.com), and session release
+  all work; no sessions left running. **Not yet tested:** the signed-in path
+  and whether Google challenges the login, and workerd connecting to
+  Browserbase directly (the production path).
 - Only Google Business belongs in this Browserbase account. Wave, banking,
   Venmo, and Zelle logins stay out of any cloud browser.
 

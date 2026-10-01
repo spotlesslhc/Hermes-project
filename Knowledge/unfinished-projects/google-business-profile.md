@@ -56,7 +56,7 @@ Website was previously **empty**.
 ## Browserbase read access (2026-10-01, in progress)
 
 `browse_google_business` is written (see [[systems/deja-read-only-tools]]) but
-**not yet live-tested**. Left to do, in order:
+**tested locally logged-out only** (see the systems note). Left to do, in order:
 
 1. Bryce adds the Browserbase key to the Cloudflare Secrets Store as
    `BROWSERBASE_API_KEY` (before merging the PR), then **rotates the key that
