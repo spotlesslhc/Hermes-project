@@ -54,6 +54,21 @@ async function getCleanerRoster(env) {
   return raw ? JSON.parse(raw) : DEFAULT_CLEANER_ROSTER;
 }
 
+// Which rail each cleaner is actually paid through. Matters for payroll note
+// formatting: Foothills Bank's Zelle note field rejects "/" outright and
+// caps notes at 140 characters, while Venmo has neither restriction (see
+// formatPayrollNote below). KV-overridable the same way as the roster.
+const DEFAULT_CLEANER_PAYMENT_METHOD = {
+  amy: "zelle",
+  ashley: "venmo"
+};
+
+async function getCleanerPaymentMethod(env, cleanerKey) {
+  const raw = await env.HERMES_KV.get("cleaner_payment_method");
+  const methods = raw ? JSON.parse(raw) : DEFAULT_CLEANER_PAYMENT_METHOD;
+  return methods[cleanerKey] || "venmo";
+}
+
 async function getReservations(env) {
   const raw = await env.HERMES_KV.get("reservations");
   return raw ? JSON.parse(raw) : [];
@@ -1326,13 +1341,34 @@ function streetNameOnly(title) {
 
 // One line per house per date, e.g. "Sahara Drive 9/27, Columbine Drive 9/29"
 // -- what street, and when, for every house covered by this payment.
-function formatPayrollNote(jobs) {
-  return jobs
-    .map((job) => {
-      const [, m, d] = job.date.split("-");
-      return `${streetNameOnly(job.property)} ${parseInt(m, 10)}/${parseInt(d, 10)}`;
-    })
-    .join(", ");
+//
+// zelleSafe swaps "/" for "-" in dates, since Foothills Bank's Zelle note
+// field rejects "/" outright ("This character is not allowed"). Zelle also
+// caps notes at 140 characters, so a busy week is truncated to whole
+// entries plus a "+N more" summary rather than cut off mid-entry (Venmo has
+// neither restriction -- discovered live during the first real payroll run,
+// see Knowledge/unfinished-projects/payroll-note-zelle-safe-formatting.md).
+function formatPayrollNote(jobs, { zelleSafe = false } = {}) {
+  const sep = zelleSafe ? "-" : "/";
+  const entries = jobs.map((job) => {
+    const [, m, d] = job.date.split("-");
+    return `${streetNameOnly(job.property)} ${parseInt(m, 10)}${sep}${parseInt(d, 10)}`;
+  });
+  const full = entries.join(", ");
+  if (!zelleSafe || full.length <= 140) return full;
+
+  const kept = [];
+  let length = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const omitted = entries.length - i - 1;
+    const suffix = omitted > 0 ? ` +${omitted} more` : "";
+    const addition = (kept.length ? 2 : 0) + entries[i].length;
+    if (length + addition + suffix.length > 140) break;
+    kept.push(entries[i]);
+    length += addition;
+  }
+  const omittedCount = entries.length - kept.length;
+  return omittedCount > 0 ? `${kept.join(", ")} +${omittedCount} more` : kept.join(", ");
 }
 
 async function getCleanerPaidThrough(env, cleanerKey) {
@@ -1381,7 +1417,9 @@ async function getCleanerPayrollSummary(env, cleanerKey) {
   const paidThrough = await getCleanerPaidThrough(env, cleanerKey);
   const jobs = await listCompletedJobsForCleaner(env, calendarId, email, paidThrough);
   const owed = jobs.reduce((sum, job) => sum + job.pay, 0);
-  return { cleaner: cleanerKey, email, paidThrough, owed, jobCount: jobs.length, jobs, paymentNote: formatPayrollNote(jobs) };
+  const paymentMethod = await getCleanerPaymentMethod(env, cleanerKey);
+  const paymentNote = formatPayrollNote(jobs, { zelleSafe: paymentMethod === "zelle" });
+  return { cleaner: cleanerKey, email, paidThrough, owed, jobCount: jobs.length, jobs, paymentMethod, paymentNote };
 }
 
 async function getAllCleanerPayrollSummaries(env) {
