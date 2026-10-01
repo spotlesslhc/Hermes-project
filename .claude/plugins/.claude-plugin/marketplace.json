@@ -1,0 +1,11 @@
+{
+  "name": "hermes-local",
+  "owner": { "name": "Spotless Cleaning" },
+  "plugins": [
+    {
+      "name": "securitymaxxing",
+      "source": "./securitymaxxing",
+      "description": "Evidence-based application security audits with file:line proof and patches."
+    }
+  ]
+}
