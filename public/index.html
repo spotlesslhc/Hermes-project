@@ -347,6 +347,8 @@
     white-space:pre-wrap; margin-bottom:14px; min-height:22px;
   }
   .ask-reply.pending{color:var(--ink-soft); font-style:italic;}
+  .ask-voice-note{font-size:12px; line-height:1.4; color:var(--amber-deep); margin:-8px 0 14px;}
+  .ask-voice-note[hidden]{display:none;}
   .ask-row{display:flex; gap:10px;}
   .mic-btn{
     flex:none; width:38px; height:38px; border-radius:3px;
@@ -416,6 +418,7 @@
       </label>
     </div>
     <div class="ask-reply" id="askReply">Ask about a job, a property, or what needs attention today.</div>
+    <div class="ask-voice-note" id="askVoiceNote" role="status" hidden></div>
     <form id="askForm" class="ask-row">
       <button type="button" class="mic-btn" id="micBtn" title="Talk to Deja" aria-label="Talk to Deja">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
@@ -906,6 +909,24 @@
     }
   });
 
+  // Browsers only let a page play sound after the person has interacted with
+  // it, and Safari/iPhone are strict about *which* element was unlocked. So
+  // keep one shared <audio> element and prime it on the first tap, click or
+  // keypress with a silent clip; every ElevenLabs reply then reuses it.
+  const dejaAudio = new Audio();
+  let dejaAudioUnlocked = false;
+  function unlockDejaAudio(){
+    if(dejaAudioUnlocked) return;
+    dejaAudioUnlocked = true;
+    dejaAudio.muted = true;
+    dejaAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+    const p = dejaAudio.play();
+    const restore = () => { dejaAudio.pause(); dejaAudio.muted = false; };
+    if(p && p.then) p.then(restore, () => { dejaAudio.muted = false; dejaAudioUnlocked = false; });
+    else restore();
+  }
+  ['pointerdown','touchend','keydown'].forEach((ev) => document.addEventListener(ev, unlockDejaAudio, { passive: true }));
+
   // Speaks a reply out loud: tries Deja's real ElevenLabs voice first (proxied
   // server-side so the API key never reaches the browser), and falls back to
   // the browser's own speechSynthesis if that secret isn't configured yet or
@@ -934,20 +955,43 @@
       window.speechSynthesis.speak(utter);
     }
 
+    // Deja falls back to the browser's robotic voice when the real one fails,
+    // which used to be invisible. Say why, right under her reply, so "she
+    // sounds like a robot" points at a cause (quota, key, blocked audio).
+    const voiceNote = document.getElementById('askVoiceNote');
+    const noteFallback = (reason) => {
+      console.warn('Deja voice fell back to the browser voice:', reason);
+      if(voiceNote){ voiceNote.textContent = 'Using the backup voice. ' + reason; voiceNote.hidden = false; }
+    };
+    const clearNote = () => { if(voiceNote){ voiceNote.hidden = true; voiceNote.textContent = ''; } };
+
     fetch('/api/speak', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text })
     }).then(async (res) => {
-      if(!res.ok) throw new Error('ElevenLabs voice not available');
+      if(!res.ok){
+        let reason = 'The voice service returned ' + res.status + '.';
+        try{ const j = await res.json(); if(j && (j.reason || j.error)) reason = j.reason || j.error; }catch(e){}
+        const err = new Error(reason); err.voiceReason = reason; throw err;
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audio.onplay = startUi;
+      // One long-lived element that was "unlocked" by a real click/tap (see
+      // unlockDejaAudio): browsers, Safari and iPhone especially, refuse to
+      // autoplay a brand-new Audio created after an async fetch.
+      const audio = dejaAudio;
+      audio.onplay = () => { clearNote(); startUi(); };
       audio.onended = () => { endUi(); URL.revokeObjectURL(url); done(); };
       audio.onerror = () => { endUi(); URL.revokeObjectURL(url); done(); };
-      audio.play().catch(() => { URL.revokeObjectURL(url); fallbackToSpeechSynthesis(); });
-    }).catch(() => {
+      audio.src = url;
+      audio.play().catch((e) => {
+        URL.revokeObjectURL(url);
+        noteFallback('Your browser blocked the audio from playing automatically (' + (e && e.name || 'error') + '). Tap anywhere on the page once and try again.');
+        fallbackToSpeechSynthesis();
+      });
+    }).catch((e) => {
+      noteFallback(e && e.voiceReason ? e.voiceReason : 'Could not reach the voice service. ' + (e && e.message || ''));
       fallbackToSpeechSynthesis();
     });
   }

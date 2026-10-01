@@ -2640,8 +2640,30 @@ async function elevenLabsSpeak(env, text) {
       voice_settings: { stability: 0.5, similarity_boost: 0.75 }
     })
   });
-  if (!res.ok) throw new Error(`ElevenLabs TTS failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    const raw = await res.text();
+    const err = new Error(`ElevenLabs TTS failed: ${res.status} ${raw}`);
+    err.upstreamStatus = res.status;
+    err.reason = describeElevenLabsError(res.status, raw);
+    throw err;
+  }
   return res;
+}
+
+// Turns an ElevenLabs error into one plain sentence for the dashboard. When
+// the real voice fails, Deja silently falls back to the robotic browser
+// voice, so without this nobody can tell *why* (quota, key, voice, plan).
+function describeElevenLabsError(status, raw) {
+  let detail = {};
+  try { const j = JSON.parse(raw); detail = (j && typeof j.detail === "object" && j.detail) || { message: j && j.detail }; } catch { /* not JSON */ }
+  const code = detail.status || "";
+  const msg = (detail.message || "").toString().slice(0, 160);
+  if (status === 401 && /quota/i.test(code + msg)) return `ElevenLabs character quota used up. ${msg}`.trim();
+  if (status === 401) return `ElevenLabs rejected the API key (401). ${msg}`.trim();
+  if (status === 402 || /payment|subscription/i.test(code)) return `ElevenLabs says this voice or feature needs a paid plan (${status} ${code}). ${msg}`.trim();
+  if (status === 404 || /voice_not_found/i.test(code)) return `ElevenLabs can't find the voice ${ELEVENLABS_VOICE_ID} in this account (${status}). ${msg}`.trim();
+  if (status === 429) return `ElevenLabs is rate-limiting requests (429). ${msg}`.trim();
+  return `ElevenLabs error ${status}${code ? " " + code : ""}. ${msg}`.trim();
 }
 
 async function handleSpeak(request, env) {
@@ -2654,8 +2676,44 @@ async function handleSpeak(request, env) {
     const upstream = await elevenLabsSpeak(env, text);
     return new Response(upstream.body, { status: 200, headers: { "content-type": "audio/mpeg" } });
   } catch (err) {
-    return json({ error: err.message }, { status: 502 });
+    return json({ error: err.message, reason: err.reason || "The voice service couldn't be reached.", upstreamStatus: err.upstreamStatus || null }, { status: 502 });
   }
+}
+
+// Free health check for the real voice: asks ElevenLabs about the key, the
+// plan's character allowance, and whether the configured voice is in the
+// account -- none of which spends any characters. Open /api/speak/status on
+// the dashboard's own address when Deja sounds robotic.
+async function handleSpeakStatus(env) {
+  if (!env.ELEVENLABS_API_KEY) return json({ ok: false, verdict: "ELEVENLABS_API_KEY is not bound on this Worker." });
+  const apiKey = await env.ELEVENLABS_API_KEY.get();
+  const call = async (path) => {
+    try {
+      const res = await fetch(`https://api.elevenlabs.io${path}`, { headers: { "xi-api-key": apiKey } });
+      const raw = await res.text();
+      let body = null; try { body = JSON.parse(raw); } catch { /* not JSON */ }
+      return { status: res.status, body, raw: raw.slice(0, 300) };
+    } catch (e) { return { status: 0, body: null, raw: String(e.message || e) }; }
+  };
+  const [sub, voice] = await Promise.all([call("/v1/user/subscription"), call(`/v1/voices/${ELEVENLABS_VOICE_ID}`)]);
+  const out = { ok: false, voiceId: ELEVENLABS_VOICE_ID, subscriptionStatus: sub.status, voiceStatus: voice.status };
+  if (sub.status === 200 && sub.body) {
+    const used = sub.body.character_count, limit = sub.body.character_limit;
+    Object.assign(out, {
+      tier: sub.body.tier, accountStatus: sub.body.status, charactersUsed: used, characterLimit: limit,
+      resetsAt: sub.body.next_character_count_reset_unix ? new Date(sub.body.next_character_count_reset_unix * 1000).toISOString() : null
+    });
+  } else {
+    out.subscriptionError = describeElevenLabsError(sub.status, sub.raw);
+  }
+  if (voice.status === 200 && voice.body) out.voiceName = voice.body.name;
+  else out.voiceError = describeElevenLabsError(voice.status, voice.raw);
+
+  if (sub.status !== 200) out.verdict = out.subscriptionError;
+  else if (typeof out.charactersUsed === "number" && out.charactersUsed >= out.characterLimit) out.verdict = `Out of ElevenLabs characters (${out.charactersUsed}/${out.characterLimit}). Resets ${out.resetsAt || "at the next billing date"}, or upgrade the plan.`;
+  else if (voice.status !== 200) out.verdict = out.voiceError;
+  else { out.ok = true; out.verdict = `ElevenLabs looks healthy: voice "${out.voiceName}", ${out.charactersUsed}/${out.characterLimit} characters used. If Deja still sounds robotic, the browser is blocking the audio instead.`; }
+  return json(out);
 }
 
 // ---- Route handlers -------------------------------------------------------
@@ -3316,6 +3374,9 @@ export default {
     }
     if (pathname === "/api/speak" && method === "POST") {
       return handleSpeak(request, env);
+    }
+    if (pathname === "/api/speak/status" && method === "GET") {
+      return handleSpeakStatus(env);
     }
     if (pathname === "/api/pending" && method === "GET") {
       return handlePendingList(env);
