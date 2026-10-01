@@ -411,7 +411,13 @@ async function fetchSitePage(env, { path }) {
 // The write-capable tool (edit_google_business) is gated in APPROVAL_REQUIRED_TOOLS.
 // The API key alone resolves the project (no BROWSERBASE_PROJECT_ID).
 const BB_API = "https://api.browserbase.com/v1";
-const GBP_HOSTS = new Set(["business.google.com", "www.google.com"]);
+// The saved login is Bryce's main Google account, so keep the reachable
+// surface small: the Business Profile app, and Google Search only (the
+// "manage profile" panel lives there). Not the rest of www.google.com (Maps
+// timeline, history, ...) and not mail/drive/myaccount.
+function gbpUrlAllowed(u) {
+  return u.protocol === "https:" && (u.hostname === "business.google.com" || (u.hostname === "www.google.com" && (u.pathname === "/search" || u.pathname.startsWith("/search/"))));
+}
 const GBP_CONTEXT_KEY = "browserbase_gbp_context_id";
 const GBP_LOGIN_SESSION_KEY = "browserbase_gbp_login_session_id";
 
@@ -483,7 +489,7 @@ async function browseGoogleBusiness(env, { url }) {
   const contextId = await env.HERMES_KV.get(GBP_CONTEXT_KEY);
   if (!contextId) throw new Error("No Google Business login saved yet. Bryce needs to open /api/browserbase/login once and sign in with the separate Google account.");
   const target = new URL(url || "https://business.google.com/locations");
-  if (target.protocol !== "https:" || !GBP_HOSTS.has(target.hostname)) throw new Error("browse_google_business only opens business.google.com or www.google.com pages.");
+  if (!gbpUrlAllowed(target)) throw new Error("browse_google_business only opens business.google.com or www.google.com/search pages.");
   // persist:false -- a read never rewrites the saved login.
   const session = await bbApi(env, "/sessions", {
     method: "POST",
@@ -501,7 +507,7 @@ async function browseGoogleBusiness(env, { url }) {
     if (finalUrl.hostname === "accounts.google.com") {
       return "The saved Google login has expired or was challenged by Google (landed on a sign-in page). Bryce needs to redo the one-time sign-in at /api/browserbase/login.";
     }
-    if (!GBP_HOSTS.has(finalUrl.hostname)) throw new Error(`The page redirected to ${finalUrl.hostname}, which isn't allowed.`);
+    if (!gbpUrlAllowed(finalUrl)) throw new Error(`The page redirected to ${finalUrl.hostname}${finalUrl.pathname}, which isn't allowed.`);
     const text = await evalText("document.body ? document.body.innerText : ''");
     // innerText has no link targets, so list the page's links (allowlisted
     // hosts only) -- that lets Deja open an edit/description page by URL
@@ -512,14 +518,14 @@ async function browseGoogleBusiness(env, { url }) {
       const seen = new Set();
       for (const { t, h } of raw) {
         let u; try { u = new URL(h); } catch (_) { continue; }
-        if (u.protocol !== "https:" || !GBP_HOSTS.has(u.hostname) || !t || h.length > 300 || seen.has(h)) continue;
+        if (!gbpUrlAllowed(u) || !t || h.length > 300 || seen.has(h)) continue;
         seen.add(h);
         links.push({ biz: u.hostname === "business.google.com", line: `- ${t.replace(/\s+/g, " ")}: ${h}` });
       }
       // Business Profile links first; Google search pages are full of long tracking links.
       links = links.sort((a, b) => b.biz - a.biz).slice(0, 25).map((l) => l.line);
     } catch (_) { /* links are a convenience */ }
-    return `${UNTRUSTED_PAGE_NOTE}\n\nURL: ${finalUrl}\nTitle: ${title}\n\n${text.slice(0, MAX_TOOL_TEXT)}${text.length > MAX_TOOL_TEXT ? "\n[truncated]" : ""}${links.length ? `\n\nLinks on this page (business.google.com / www.google.com only):\n${links.join("\n")}` : ""}`;
+    return `${UNTRUSTED_PAGE_NOTE}\n\nURL: ${finalUrl}\nTitle: ${title}\n\n${text.slice(0, MAX_TOOL_TEXT)}${text.length > MAX_TOOL_TEXT ? "\n[truncated]" : ""}${links.length ? `\n\nLinks on this page (business.google.com and Google Search only):\n${links.join("\n")}` : ""}`;
   } finally {
     if (cdp) cdp.close();
     await bbReleaseSession(env, session.id);
@@ -531,7 +537,7 @@ async function browseGoogleBusiness(env, { url }) {
 // is deliberately tiny (click a labelled control, type into a labelled field,
 // wait), every step is re-checked against the host allowlist, and a few
 // destructive or credential-touching things are refused outright.
-const GBP_EDIT_BLOCKED = /\b(delete|remove|transfer|ownership|permanently|deactivate|unverify|sign out|log out|password|payment|billing)\b/i;
+const GBP_EDIT_BLOCKED = /\b(delete|remove|transfer|owner|owners|ownership|primary owner|manager|managers|admin|invite|access|permissions?|users?|permanently|deactivate|close business|mark as closed|unverify|sign out|log out|sign in|password|account|payment|billing)\b/i;
 
 // Finds a visible element by its text/aria-label (click) or label/placeholder
 // (type) inside the page and returns its centre, so a real mouse click can be
@@ -553,10 +559,11 @@ const GBP_FIND_FN = `(function (kind, text) {
   const hit = all.find((el) => labelOf(el).some((b) => b === want)) || all.find((el) => labelOf(el).some((b) => b.includes(want)));
   if (!hit) return JSON.stringify({ found: false });
   if (kind === "type" && (hit.type === "password")) return JSON.stringify({ found: false, refused: "password field" });
+  const matchedLabel = labelOf(hit).join(" | ");
   hit.scrollIntoView({ block: "center" });
   const r = hit.getBoundingClientRect();
   if (kind === "type") { hit.focus(); if (hit.select) hit.select(); else document.execCommand("selectAll"); }
-  return JSON.stringify({ found: true, x: r.left + r.width / 2, y: r.top + r.height / 2 });
+  return JSON.stringify({ found: true, label: matchedLabel, x: r.left + r.width / 2, y: r.top + r.height / 2 });
 })`;
 
 async function editGoogleBusiness(env, { summary, url, steps }) {
@@ -565,7 +572,7 @@ async function editGoogleBusiness(env, { summary, url, steps }) {
   if (!summary || typeof summary !== "string") throw new Error("summary is required: say in plain English what changes, from what to what.");
   if (!Array.isArray(steps) || !steps.length || steps.length > 20) throw new Error("steps must be 1-20 items.");
   const target = new URL(url || "https://business.google.com/locations");
-  if (target.protocol !== "https:" || !GBP_HOSTS.has(target.hostname)) throw new Error("edit_google_business only opens business.google.com or www.google.com pages.");
+  if (!gbpUrlAllowed(target)) throw new Error("edit_google_business only opens business.google.com or www.google.com/search pages.");
   for (const [i, st] of steps.entries()) {
     if (st.action === "click") { if (!st.text) throw new Error(`step ${i + 1}: click needs text`); if (GBP_EDIT_BLOCKED.test(st.text)) throw new Error(`step ${i + 1}: refusing to click "${st.text}" -- that kind of change has to be done by Bryce himself.`); }
     else if (st.action === "type") { if (!st.label || typeof st.text !== "string") throw new Error(`step ${i + 1}: type needs label and text`); if (GBP_EDIT_BLOCKED.test(st.label)) throw new Error(`step ${i + 1}: refusing to type into "${st.label}".`); }
@@ -582,12 +589,15 @@ async function editGoogleBusiness(env, { summary, url, steps }) {
     const sid = await cdpOpenPage(cdp, target.toString());
     await new Promise((r) => setTimeout(r, 3000));
     const evalValue = async (expression) => (await cdp.send("Runtime.evaluate", { expression, returnByValue: true }, sid)).result.value || "";
-    const hostOk = async () => { const h = new URL(await evalValue("location.href")).hostname; if (h === "accounts.google.com") throw new Error("The saved Google login has expired; Bryce needs to redo /api/browserbase/login."); if (!GBP_HOSTS.has(h)) throw new Error(`The page moved to ${h}, which isn't allowed. Stopped.`); };
+    const hostOk = async () => { const u = new URL(await evalValue("location.href")); if (u.hostname === "accounts.google.com") throw new Error("The saved Google login has expired; Bryce needs to redo /api/browserbase/login."); if (!gbpUrlAllowed(u)) throw new Error(`The page moved to ${u.hostname}${u.pathname}, which isn't allowed. Stopped.`); };
     await hostOk();
     for (const [i, st] of steps.entries()) {
       if (st.action === "wait") { await new Promise((r) => setTimeout(r, Math.min(Math.max(Number(st.ms) || 1000, 200), 5000))); done.push(`wait`); continue; }
       const found = JSON.parse(await evalValue(`${GBP_FIND_FN}(${JSON.stringify(st.action)}, ${JSON.stringify(st.action === "click" ? st.text : st.label)})`) || "{}");
       if (!found.found) throw new Error(`step ${i + 1} (${st.action} "${st.action === "click" ? st.text : st.label}"): ${found.refused || "couldn't find that on the page"}. Steps 1-${i} did run: ${done.join("; ") || "none"}.`);
+      // The blocklist above only saw what Deja asked for; also check the control
+      // that actually matched (a partial match could be "Save and remove ...").
+      if (GBP_EDIT_BLOCKED.test(found.label || "")) throw new Error(`step ${i + 1}: the matching control is "${(found.label || "").slice(0, 80)}", which is a kind of change Bryce has to do himself. Steps 1-${i} did run: ${done.join("; ") || "none"}.`);
       if (st.action === "click") {
         for (const type of ["mousePressed", "mouseReleased"]) await cdp.send("Input.dispatchMouseEvent", { type, x: found.x, y: found.y, button: "left", clickCount: 1 }, sid);
         done.push(`clicked "${st.text}"`);
@@ -3174,7 +3184,23 @@ async function handlePendingList(env) {
   return json(await listPendingActions(env));
 }
 
+// Approve/Deny and the Browserbase sign-in routes act with Bryce's Access
+// session, so refuse anything the browser says was triggered from another
+// site (a CSRF'd approval would bypass the whole approval queue).
+// allowNavigation: the GET sign-in routes are opened by Bryce as top-level
+// pages, and the trip through the Access login can make that look
+// cross-site, so only subresource/iframe/fetch use from another site is refused there.
+function isCrossSite(request, { allowNavigation = false } = {}) {
+  const site = request.headers.get("sec-fetch-site");
+  if (site && site !== "same-origin" && site !== "none") {
+    if (!(allowNavigation && request.headers.get("sec-fetch-dest") === "document")) return true;
+  }
+  const origin = request.headers.get("origin");
+  return !!origin && origin !== new URL(request.url).origin;
+}
+
 async function handlePendingDecide(request, env) {
+  if (isCrossSite(request)) return json({ error: "Cross-site request refused" }, { status: 403 });
   let body;
   try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, { status: 400 }); }
   const { id, decision } = body || {};
@@ -3228,6 +3254,9 @@ export default {
     }
     if (pathname === "/api/spotify/callback" && method === "GET") {
       return handleSpotifyCallback(request, env);
+    }
+    if (pathname.startsWith("/api/browserbase/") && isCrossSite(request, { allowNavigation: true })) {
+      return json({ error: "Cross-site request refused" }, { status: 403 });
     }
     if (pathname === "/api/browserbase/login" && method === "GET") {
       try { return await handleBrowserbaseLogin(env); } catch (err) { return json({ error: err.message }, { status: 502 }); }
