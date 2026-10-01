@@ -90,9 +90,10 @@ browser. No project id is used; the API key alone resolves the project.
   edit pages by URL. Mechanics tested on a public Google page (type, click,
   wait, blocked step, missing control); **not yet tried on the real Business
   Profile** -- expect label-matching to need a round or two of adjustment.
-- **Security review 2026-10-01 (hardening PR):** (1) reachable pages are now
-  `business.google.com` plus `www.google.com/search` only (the saved login is
-  Bryce's main account, so Maps timeline/history etc. are out); (2) the edit
+- **Security review 2026-10-01 (hardening PR):** (1) reachable pages were narrowed
+  to `business.google.com` plus `www.google.com/search` -- later widened again
+  to any `www.google.com` page at Bryce's request (see browse_web below; mail,
+  drive and myaccount are still out); (2) the edit
   blocklist is broader (owner/manager/admin/invite/access/users/account/...)
   and is also checked against the control that *actually matched*, not just
   the text Deja asked for; (3) `/api/pending/decide` (Approve/Deny) refuses
@@ -105,6 +106,16 @@ browser. No project id is used; the API key alone resolves the project.
   live-view link stays usable until the 15-minute timeout; a stray sign-in
   session ended with `persist: true` could overwrite the saved login with a
   logged-out one (only costs a re-sign-in).
+- **`browse_web` (other sites, added 2026-10-01):** Bryce wants Deja to be able
+  to visit sites beyond Google, but only with his say-so. Read-only (text +
+  links), runs in a **separate Browserbase session with no saved login**, https
+  public hostnames only (no IPs, localhost, embedded credentials). The gate is
+  enforced server-side in the chat loop, not by the model: it runs immediately
+  only if Bryce's *current message* names the site (`userNamedUrl`: exact
+  hostname match, and any `?query` must also be in his message so a URL can't
+  smuggle data out); otherwise it's queued as a pending action for
+  Approve/Deny on the dashboard. Page content is untrusted and Deja is told
+  never to follow a URL a page suggests. Approving a queued visit runs it.
 - **Tested 2026-10-01** (local workerd, traffic relayed because the session
   sandbox blocks workerd's direct egress): Context create, session create with
   a Context, raw-CDP WebSocket, navigate, text read, host allowlist rejection,
