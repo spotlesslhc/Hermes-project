@@ -699,11 +699,15 @@
   tick();
   setInterval(tick, 30000);
 
-  // Plain user/Deja turns for this page session only (resets on reload) — sent
-  // back with each /api/ask call so she still has the thread if she asked a
-  // clarifying question and is now getting the answer. Capped so a long
-  // back-and-forth doesn't grow the request without bound.
-  let dejaHistory = [];
+  // This page session's conversation with Deja (resets on reload), sent back
+  // with each /api/ask call so she still has the thread if she asked a
+  // clarifying question, and so she can see which tools she actually ran
+  // earlier. Kept as whole exchanges -- the user's message, any tool_use /
+  // tool_result blocks, and her reply, exactly as /api/ask returned them in
+  // `turn` -- so trimming to the most recent ones never separates a tool call
+  // from its result. Capped so a long back-and-forth doesn't grow the request
+  // without bound.
+  let dejaExchanges = [];
   const DEJA_HISTORY_MAX_TURNS = 6;
 
   const STATUS_DOT = { running: '', attn: 'amber', error: 'red', idle: '' };
@@ -867,7 +871,7 @@
       const res = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message, history: dejaHistory })
+        body: JSON.stringify({ message, history: dejaExchanges.flat() })
       });
       const data = await res.json();
       reply.classList.remove('pending');
@@ -876,8 +880,10 @@
       stateEl.textContent = 'Ready';
       if(window.DejaVoice) window.DejaVoice.setExpectFollowUp(res.ok ? !!data.keepListening : true);
       if(res.ok){
-        dejaHistory.push({ role: 'user', content: message }, { role: 'assistant', content: text });
-        dejaHistory = dejaHistory.slice(-DEJA_HISTORY_MAX_TURNS * 2);
+        dejaExchanges.push(Array.isArray(data.turn) && data.turn.length
+          ? data.turn
+          : [{ role: 'user', content: message }, { role: 'assistant', content: text }]);
+        dejaExchanges = dejaExchanges.slice(-DEJA_HISTORY_MAX_TURNS);
         loadLog();
         loadPending();
         if(document.getElementById('voiceToggle').checked){
