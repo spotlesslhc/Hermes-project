@@ -3090,6 +3090,99 @@ async function requireZapierWebhookSecret(request, env) {
   return null;
 }
 
+// ---- Bank text alerts -> pending "mark invoice paid" cards -----------------
+//
+// Zelle (Foothills Bank) has no API and no emails, but Bryce gets a text alert
+// for each deposit. His phone forwards that text here (iOS Shortcuts / Android
+// SMS forwarder -- see Knowledge/systems/bank-text-alerts.md). Nothing is ever
+// marked paid from this route: a clean match only becomes a Pending Action
+// (record_invoice_payment) for Bryce to Approve on the dashboard, every time.
+// Texts are untrusted input -- they are only parsed for an amount and a name.
+
+function parseBankAlert(text) {
+  const t = String(text || "").replace(/\s+/g, " ").trim();
+  const amt = t.match(/\$\s?([\d,]+(?:\.\d{1,2})?)/);
+  const amount = amt ? Math.round(parseFloat(amt[1].replace(/,/g, "")) * 100) / 100 : null;
+  const looksOutgoing = /\b(withdraw|withdrawal|debit|purchase|sent|payment to|paid to|declined|overdraft|low balance|balance (is|below))\b/i.test(t) && !/\b(deposit|deposited|received|credit)\b/i.test(t);
+  const from = t.match(/\bfrom\s+([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*){0,3})/i);
+  let name = from ? from[1].split(/\s+(?:on|for|via|to|at|has|was|into|in|with|ref)\b/i)[0].trim() : null;
+  return { amount, name, outgoing: looksOutgoing, zelle: /zelle/i.test(t) };
+}
+
+// Candidate open invoices whose amount due equals the deposit. If the text
+// named a sender and some candidates' customer names share a word with it,
+// prefer those. Returns the candidate list; the caller only auto-proposes
+// when exactly one remains.
+function matchInvoicesForAlert(alert, invoices) {
+  const byAmount = invoices.filter((i) => Math.abs(parseFloat(i.amountDue?.value || 0) - alert.amount) < 0.01);
+  if (alert.name) {
+    const words = alert.name.toLowerCase().split(/[^a-z]+/).filter((w) => w.length >= 3);
+    const byName = byAmount.filter((i) => (i.customer?.name || "").toLowerCase().split(/[^a-z]+/).some((w) => words.includes(w)));
+    if (byName.length) return byName;
+  }
+  return byAmount;
+}
+
+async function listOpenWaveInvoiceNodes(env) {
+  const businessId = await getWaveBusinessId(env);
+  const data = await waveGraphQL(env, `query($businessId: ID!) {
+    business(id: $businessId) {
+      invoices(page: 1, pageSize: 200) {
+        edges { node { id invoiceNumber status dueDate amountDue { value } customer { name } } }
+      }
+    }
+  }`, { businessId });
+  const edges = (data.business && data.business.invoices && data.business.invoices.edges) || [];
+  return edges.map((e) => e.node).filter((i) => i.status !== "DRAFT" && i.status !== "PAID");
+}
+
+// Its own secret (BANK_ALERT_SECRET), separate from Zapier's: Secrets Store
+// values can't be read back, and this one lives on Bryce's phone, so a lost
+// phone only exposes this one narrow route (which can only queue cards).
+async function handleBankAlertWebhook(request, env) {
+  const provided = request.headers.get("x-bank-alert-secret") || "";
+  const expected = env.BANK_ALERT_SECRET ? await env.BANK_ALERT_SECRET.get() : "";
+  if (!expected || !timingSafeEqual(provided, expected)) return json({ error: "Unauthorized" }, { status: 401 });
+
+  const raw = (await request.text()).slice(0, 2000);
+  let text = raw;
+  try { const j = JSON.parse(raw); text = String(j.text ?? j.message ?? j.body ?? raw); } catch { /* plain-text body */ }
+  if (!text.trim()) return json({ error: "Empty alert" }, { status: 400 });
+
+  // The same text arriving twice (phone retries, double automations) must not
+  // create two cards.
+  const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text.trim())))).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+  if (await env.HERMES_KV.get(`bankalert:${digest}`)) return json({ ok: true, duplicate: true });
+  await env.HERMES_KV.put(`bankalert:${digest}`, "1", { expirationTtl: 3 * 24 * 3600 });
+
+  const alert = parseBankAlert(text);
+  const tell = async (msg) => { try { await sendTelegramMessage(env, msg); } catch (_) { /* Activity log still has it */ } };
+  const snippet = text.replace(/\s+/g, " ").trim().slice(0, 160);
+
+  if (alert.amount === null || alert.outgoing) {
+    await appendLog(env, { who: "Bookkeeper", what: `Bank text ignored (${alert.amount === null ? "no dollar amount" : "looks like money going out"}): ${snippet}` });
+    return json({ ok: true, ignored: true });
+  }
+
+  const invoices = await listOpenWaveInvoiceNodes(env);
+  const matches = matchInvoicesForAlert(alert, invoices);
+  if (matches.length !== 1) {
+    const why = matches.length === 0 ? `no open Wave invoice has exactly $${alert.amount.toFixed(2)} due` : `${matches.length} open invoices match $${alert.amount.toFixed(2)} (${matches.map((m) => `#${m.invoiceNumber} ${m.customer?.name}`).join(", ")})`;
+    await appendLog(env, { who: "Bookkeeper", what: `Bank deposit text for $${alert.amount.toFixed(2)}${alert.name ? ` from ${alert.name}` : ""} needs a human: ${why}` });
+    await tell(`Deposit text: $${alert.amount.toFixed(2)}${alert.name ? ` from ${alert.name}` : ""} -- ${why}. Tell Deja which invoice it covers if it's a customer payment.`);
+    return json({ ok: true, matched: false });
+  }
+
+  const inv = matches[0];
+  const pending = await createPendingAction(env, {
+    tool: "record_invoice_payment",
+    input: { customer_name: inv.customer.name, amount: alert.amount, invoice_number: String(inv.invoiceNumber), payment_method: "zelle", date: toDateOnly(new Date()) },
+    reason: `Bank text: "${snippet}" -- matches invoice #${inv.invoiceNumber} (${inv.customer.name}, $${alert.amount.toFixed(2)} due)${alert.zelle ? "" : " -- text didn't say Zelle, check the source"}`
+  });
+  await tell(`Deposit text of $${alert.amount.toFixed(2)} matches invoice #${inv.invoiceNumber} (${inv.customer.name}). Approve it on the dashboard to mark it paid.`);
+  return json({ ok: true, pending: pending.id });
+}
+
 async function handleReservation(request, env) {
   const authError = await requireZapierWebhookSecret(request, env);
   if (authError) return authError;
@@ -3246,6 +3339,9 @@ export default {
     }
     if (pathname === "/webhooks/zapier-status" && method === "POST") {
       return handleZapierStatusWebhook(request, env);
+    }
+    if (pathname === "/webhooks/bank-alert" && method === "POST") {
+      return handleBankAlertWebhook(request, env);
     }
     if (pathname === "/webhooks/telegram" && method === "POST") {
       return handleTelegramWebhook(request, env);

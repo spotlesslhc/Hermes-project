@@ -78,6 +78,11 @@
       "binding": "BROWSERBASE_API_KEY",
       "store_id": "8f15d6429b5741f9ac32e05415413a65",
       "secret_name": "BROWSERBASE_API_KEY"
+    },
+    {
+      "binding": "BANK_ALERT_SECRET",
+      "store_id": "8f15d6429b5741f9ac32e05415413a65",
+      "secret_name": "BANK_ALERT_SECRET"
     }
   ],
   // spotlesslhc.com is already a Cloudflare-managed zone (the website runs
