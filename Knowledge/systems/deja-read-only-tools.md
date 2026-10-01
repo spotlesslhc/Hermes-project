@@ -57,9 +57,11 @@ browser. No project id is used; the API key alone resolves the project.
   secured (2FA), rotate the API key if it's ever exposed, and revoke the
   session from myaccount.google.com/device-activity if needed.
 - **One-time sign-in:** Bryce opens `/api/browserbase/login` (behind Access),
-  which makes the Context on first use, opens business.google.com in a session
-  with `persist: true`, and redirects him to Browserbase's live view. He types
-  the login for the *separate* manager account himself (credentials never pass
+  which makes the Context on first use, opens a blank session with `persist: true`, and redirects him to
+  Browserbase's live view (no CDP connection: on the free plan a disconnect
+  ends the session, which is what made the first version say "session ended").
+  He types business.google.com into the live view's address bar, then types
+  the login for his Google account himself (credentials never pass
   through the Worker), then opens `/api/browserbase/login/done`, which ends the
   session; ending it is what saves the cookies. Context id lives in KV key
   `browserbase_gbp_context_id`.

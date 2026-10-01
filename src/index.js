@@ -509,8 +509,9 @@ async function handleBrowserbaseLogin(env) {
     body: JSON.stringify({ timeout: 900, browserSettings: { context: { id: contextId, persist: true } } })
   });
   await env.HERMES_KV.put(GBP_LOGIN_SESSION_KEY, session.id);
-  const cdp = await openCdp(session.connectUrl);
-  try { await cdpOpenPage(cdp, "https://business.google.com/"); } finally { cdp.close(); }
+  // Don't open a CDP connection here: without keepAlive (paid plans only) the
+  // session ends the moment it disconnects. Bryce uses the live view's own
+  // address bar to go to business.google.com.
   const live = await bbApi(env, `/sessions/${session.id}/debug`);
   await appendLog(env, { who: "Deja", what: "Started the one-time Google Business sign-in in Browserbase" });
   return Response.redirect(live.debuggerFullscreenUrl, 302);
