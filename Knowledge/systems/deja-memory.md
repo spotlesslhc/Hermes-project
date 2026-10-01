@@ -12,10 +12,11 @@ burn tokens on every request.
 
 ## Why this exists
 
-`/api/ask` is stateless per request — the dashboard never sends prior
-turns back (see `public/index.html`'s `askForm` handler), so without this
-Deja forgot everything the instant a reply was sent, even earlier in the
-same on-screen conversation.
+`/api/ask` is stateless per request — the Worker stores nothing between
+calls, so without this Deja forgot everything the instant a reply was
+sent. (Within one open dashboard page the browser does send the recent
+conversation back — see "In-conversation history" below — but that resets
+on reload; this memory is what survives across conversations.)
 
 ## How it works
 
@@ -35,6 +36,36 @@ same on-screen conversation.
   folds it into the system prompt as a short bulleted section — no full
   transcript, no extra API round trip (it's a single KV read, same cost
   as the reads `handleAsk` already does elsewhere).
+
+## In-conversation history (tool calls included)
+
+The dashboard keeps this page session's last 6 exchanges and sends them
+back with every `/api/ask` call. Each exchange is stored **exactly as the
+Worker returned it** in the response's `turn` field: the user's message,
+every `tool_use` / `tool_result` round, and Deja's final reply.
+
+This matters because history used to be plain text only. Deja could see
+what she *said* she did but not which tools actually ran, so she told
+Bryce she had no record of calling `queue_edit_request` and
+`list_wave_invoices` (and flip-flopped on whether Spotify commands ran)
+when they had. Fixed 2026-10-01 — see
+`Knowledge/tasks/done/2026-10-01-fix-deja-losing-track-of-her-own-tool-ca.md`.
+
+Rules the Worker enforces in `sanitizeHistory` (a request body isn't
+trustworthy on its own):
+- Only `text`, `tool_use` (assistant role) and `tool_result` (user role)
+  blocks survive; text capped at 4000 chars, tool results at 1500, tool
+  inputs at 4000.
+- Every `tool_use` must be answered by a `tool_result` with the same ids in
+  the next message, or the Anthropic API rejects the whole conversation.
+  History is trimmed to start at a plain user message, and if pairing is
+  broken anywhere it falls back to text-only history instead of failing.
+- Older dashboards sending plain strings still work.
+- The browser keeps whole exchanges so trimming to the latest 6 can never
+  split a tool call from its result.
+
+History is still per page session (resets on reload) and still lives only
+in the browser, not on the server.
 
 ## Deliberately not built
 

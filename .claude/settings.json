@@ -1,0 +1,34 @@
+{
+  "extraKnownMarketplaces": {
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
+      }
+    },
+    "knowledge-work-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/knowledge-work-plugins"
+      }
+    },
+    "cloudflare": {
+      "source": {
+        "source": "github",
+        "repo": "cloudflare/skills"
+      }
+    },
+    "hermes-local": {
+      "source": {
+        "source": "directory",
+        "path": "/home/user/Hermes-project/.claude/plugins"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "frontend-design@claude-plugins-official": true,
+    "design@knowledge-work-plugins": true,
+    "cloudflare@cloudflare": true,
+    "securitymaxxing@hermes-local": true
+  }
+}
