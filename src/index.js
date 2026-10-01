@@ -2660,6 +2660,93 @@ async function handleSpeak(request, env) {
 
 // ---- Route handlers -------------------------------------------------------
 
+// Cleans up conversation history sent by the client before it's replayed to
+// the model. Messages may be plain strings (older dashboards) or arrays of
+// text / tool_use / tool_result blocks -- the latter is what lets Deja see
+// her own earlier tool calls instead of only the words she said about them.
+// A request body isn't trustworthy on its own, so: only known block types
+// and fields survive, sizes are capped, and tool_use / tool_result must pair
+// up exactly (the API rejects an orphan). If anything doesn't line up, fall
+// back to text-only history rather than failing the whole request.
+const HISTORY_MAX_MESSAGES = 60;
+const HISTORY_TEXT_MAX = 4000;
+const HISTORY_TOOL_RESULT_MAX = 1500;
+const HISTORY_TOOL_INPUT_MAX = 4000;
+
+function sanitizeHistory(raw) {
+  const msgs = (Array.isArray(raw) ? raw : []).slice(-HISTORY_MAX_MESSAGES);
+  const clean = [];
+  for (const m of msgs) {
+    if (!m || (m.role !== "user" && m.role !== "assistant")) continue;
+    if (typeof m.content === "string") {
+      clean.push({ role: m.role, content: m.content.slice(0, HISTORY_TEXT_MAX) });
+      continue;
+    }
+    if (!Array.isArray(m.content)) continue;
+    const blocks = [];
+    for (const b of m.content) {
+      if (!b || typeof b !== "object") continue;
+      if (b.type === "text" && typeof b.text === "string" && b.text) {
+        blocks.push({ type: "text", text: b.text.slice(0, HISTORY_TEXT_MAX) });
+      } else if (b.type === "tool_use" && m.role === "assistant" && typeof b.id === "string" && typeof b.name === "string") {
+        let input = b.input && typeof b.input === "object" ? b.input : {};
+        if (JSON.stringify(input).length > HISTORY_TOOL_INPUT_MAX) input = { _truncated: true };
+        blocks.push({ type: "tool_use", id: b.id, name: b.name, input });
+      } else if (b.type === "tool_result" && m.role === "user" && typeof b.tool_use_id === "string") {
+        const content = typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? "");
+        blocks.push({ type: "tool_result", tool_use_id: b.tool_use_id, content: content.slice(0, HISTORY_TOOL_RESULT_MAX) });
+      }
+    }
+    if (blocks.length) clean.push({ role: m.role, content: blocks });
+  }
+
+  // Trim from the front to a plain user message so the history never starts
+  // mid-exchange (a tool_result whose tool_use was cut off).
+  const start = clean.findIndex((m) => m.role === "user" && (typeof m.content === "string" || m.content.every((b) => b.type === "text")));
+  const trimmed = start === -1 ? [] : clean.slice(start);
+
+  if (historyPairsAreValid(trimmed)) return trimmed;
+  return textOnlyHistory(trimmed);
+}
+
+// Every assistant tool_use must be answered by a tool_result for the same ids
+// in the very next user message, and every tool_result must answer the
+// message right before it. The history must also end on an assistant message,
+// since the new user message gets appended after it.
+function historyPairsAreValid(msgs) {
+  for (let i = 0; i < msgs.length; i++) {
+    const m = msgs[i];
+    const uses = Array.isArray(m.content) ? m.content.filter((b) => b.type === "tool_use").map((b) => b.id) : [];
+    const results = Array.isArray(m.content) ? m.content.filter((b) => b.type === "tool_result").map((b) => b.tool_use_id) : [];
+    if (uses.length) {
+      const next = msgs[i + 1];
+      if (!next || next.role !== "user" || !Array.isArray(next.content)) return false;
+      const nextResults = next.content.filter((b) => b.type === "tool_result").map((b) => b.tool_use_id);
+      if (nextResults.length !== uses.length || !uses.every((id) => nextResults.includes(id))) return false;
+    }
+    if (results.length) {
+      const prev = msgs[i - 1];
+      if (!prev || prev.role !== "assistant" || !Array.isArray(prev.content)) return false;
+      const prevUses = prev.content.filter((b) => b.type === "tool_use").map((b) => b.id);
+      if (results.length !== prevUses.length || !results.every((id) => prevUses.includes(id))) return false;
+    }
+  }
+  return msgs.length === 0 || msgs[msgs.length - 1].role === "assistant";
+}
+
+function textOnlyHistory(msgs) {
+  const out = [];
+  for (const m of msgs) {
+    const text = typeof m.content === "string" ? m.content : m.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
+    if (!text) continue;
+    if (out.length && out[out.length - 1].role === m.role) continue;
+    out.push({ role: m.role, content: text });
+  }
+  while (out.length && out[out.length - 1].role === "user") out.pop();
+  while (out.length && out[0].role !== "user") out.shift();
+  return out;
+}
+
 async function handleAsk(request, env) {
   let body;
   try {
@@ -2671,15 +2758,13 @@ async function handleAsk(request, env) {
   const message = (body.message || "").toString().slice(0, 4000);
   if (!message) return json({ error: "Message is required" }, { status: 400 });
 
-  // Plain prior turns the caller (currently just the dashboard) sends back so
-  // a reply to Deja's own clarifying question still has the question in
-  // context — /api/ask itself stores nothing between requests. Capped the
-  // same way DEJA_HISTORY_MAX_TURNS is on the frontend, re-enforced here
-  // since a request body isn't trustworthy on its own.
-  const history = (Array.isArray(body.history) ? body.history : [])
-    .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
-    .slice(-12)
-    .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }));
+  // Prior turns the caller (currently just the dashboard) sends back so a
+  // reply to Deja's own clarifying question still has the question in
+  // context, and so she can see which tools she actually ran earlier in the
+  // conversation -- /api/ask itself stores nothing between requests. Each
+  // response returns the full structured messages from that exchange
+  // (`turn`), tool_use/tool_result blocks included; see sanitizeHistory.
+  const history = sanitizeHistory(body.history);
 
   if (!env.ANTHROPIC_API_KEY) {
     return json({ error: "ANTHROPIC_API_KEY is not bound on this project yet." }, { status: 500 });
@@ -2987,6 +3072,7 @@ async function handleAsk(request, env) {
   const messages = [...history, { role: "user", content: message }];
   let reply = "";
   let toolFailed = false;
+  let finalContent = null;
 
   for (let turn = 0; turn < 5; turn++) {
     const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
@@ -3014,7 +3100,10 @@ async function handleAsk(request, env) {
     reply = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
     const toolUses = (data.content || []).filter((b) => b.type === "tool_use");
 
-    if (!toolUses.length) break;
+    if (!toolUses.length) {
+      finalContent = data.content || [];
+      break;
+    }
 
     messages.push({ role: "assistant", content: data.content });
 
@@ -3043,6 +3132,20 @@ async function handleAsk(request, env) {
     messages.push({ role: "user", content: toolResults });
   }
 
+  // Everything this exchange added to the conversation -- the user's message,
+  // any tool_use / tool_result rounds, and Deja's final reply -- handed back so
+  // the dashboard can replay it next turn. Without the tool blocks she only
+  // sees what she *said* she did, and can't tell what actually ran. If the
+  // 5-round cap was hit mid-tool-call, close the exchange with her text so the
+  // history still ends on an assistant message.
+  const finalBlocks = (finalContent || []).filter((b) => b.type === "text" || b.type === "tool_use");
+  const added = messages.slice(history.length);
+  if (finalContent) {
+    added.push({ role: "assistant", content: finalBlocks.length ? finalBlocks : [{ type: "text", text: reply || "(no reply)" }] });
+  } else {
+    added.push({ role: "assistant", content: [{ type: "text", text: reply || "(I ran out of steps before finishing that.)" }] });
+  }
+
   await appendLog(env, { who: "Deja", what: message.slice(0, 140) });
 
   // Tells the dashboard's voice UI whether to keep the mic open for a
@@ -3053,7 +3156,7 @@ async function handleAsk(request, env) {
   // that needs a follow-up but happens not to end in "?".
   const keepListening = toolFailed || /\?\s*$/.test(reply.trim());
 
-  return json({ reply, keepListening });
+  return json({ reply, keepListening, turn: added });
 }
 
 // A shared secret only Zapier and this Worker know, checked independently of
