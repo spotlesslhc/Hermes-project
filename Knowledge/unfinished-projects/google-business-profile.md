@@ -66,7 +66,9 @@ Website was previously **empty**.
    `/api/browserbase/login/done`. If Google blocks/challenges the
    login (free plan: no proxies/CAPTCHA solving), options are a paid plan with
    proxies, or doing the login from a trusted network via live view.
-3. Confirm Deja can read the verified listing and check that the 2026-09-30
+3. Deja now also has approval-gated edit access (`edit_google_business`); try
+   the first real edit (e.g. the description) and tune label matching.
+4. Confirm Deja can read the verified listing and check that the 2026-09-30
    changes (description, website, social links) actually took.
 
 ## Research notes (2026 sources in the session)

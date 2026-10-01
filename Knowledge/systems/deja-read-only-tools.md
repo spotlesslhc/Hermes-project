@@ -72,6 +72,24 @@ browser. No project id is used; the API key alone resolves the project.
 - **Untrusted content:** reviews and Q&A are strangers' text; results carry an
   untrusted-page note like the Gmail tools. Any future write tool (post,
   reply, edit) must go in `APPROVAL_REQUIRED_TOOLS`.
+- **`edit_google_business` (write access, added 2026-10-01):** Bryce asked for
+  Deja to be able to edit. It is in `APPROVAL_REQUIRED_TOOLS`, so it only runs
+  after Bryce clicks Approve on the dashboard (never by chat/voice); the
+  Pending Actions row shows `summary`, url and steps. Steps are only
+  `click` (by visible text/aria-label), `type` (into a labelled field, replaces
+  the contents) and `wait`; every step re-checks the host allowlist and aborts
+  if the page leaves business.google.com / www.google.com or hits the login
+  page. Clicks/typing matching delete / remove / transfer / ownership /
+  permanently / deactivate / payment / billing / password are refused outright
+  (Bryce does those himself); password fields are refused. Deja is told to
+  read the current value first and put "from X to Y" in `summary` (that plus
+  the step list in the Activity log is how an edit gets reversed), to act only
+  on Bryce's own requests, and to verify afterwards with
+  `browse_google_business`. `browse_google_business` also returns the page's
+  links (allowlisted hosts, business.google.com first, max 25) so Deja can open
+  edit pages by URL. Mechanics tested on a public Google page (type, click,
+  wait, blocked step, missing control); **not yet tried on the real Business
+  Profile** -- expect label-matching to need a round or two of adjustment.
 - **Tested 2026-10-01** (local workerd, traffic relayed because the session
   sandbox blocks workerd's direct egress): Context create, session create with
   a Context, raw-CDP WebSocket, navigate, text read, host allowlist rejection,
