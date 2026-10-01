@@ -46,7 +46,10 @@ hard line, not a caution that eases with more supervision.
 - KV keys: `payroll:paid_through:<cleaner>` (date), `payroll_payment:<uuid>`
   (one record per payment), `payroll_payment_index` (id list, same
   lazy-index pattern as the approval queue's `PENDING_INDEX_KEY` — see
-  that comment in `src/index.js` for why a plain `list()` isn't used).
+  that comment in `src/index.js` for why a plain `list()` isn't used),
+  `cleaner_payment_method` (optional override of which rail each cleaner
+  is paid through — see "Payment notes never include the full address"
+  below for why that matters).
 
 ## Payment notes never include the full address
 
@@ -61,6 +64,20 @@ e.g. `"Sahara Drive 9/27, Columbine Drive 9/29"`. Both
 `getCleanerPayrollSummary` (as `paymentNote`) and the dashboard's Cleaner
 Payroll section (with a one-click Copy button) expose this, so it's ready
 to paste into Venmo/Zelle's note field without Bryce composing it by hand.
+
+**Zelle-safe automatically, per cleaner** (fixed 2026-10-01 — see
+`Knowledge/decisions/` git history for the original bug: Foothills Bank's
+Zelle note field rejects `/` outright and caps notes at 140 characters,
+so Amy's Zelle note had to be hand-reformatted to dashes the first real
+payroll run). `formatPayrollNote(jobs, { zelleSafe })` swaps `/` for `-`
+in dates and, past 140 characters, truncates to whole entries plus a
+`"+N more"` summary rather than cutting an entry in half.
+`getCleanerPayrollSummary` picks the mode automatically from each
+cleaner's payment rail (`getCleanerPaymentMethod`, defaulting to `amy:
+zelle`, `ashley: venmo`, overridable via the `cleaner_payment_method` KV
+key the same way the roster is) — so the dashboard note, the Wave expense
+description, and `record_cleaner_payment` are all already in the right
+format with no manual fixup.
 
 ## Phase 2 (built 2026-09-26): the weekly browser-assisted run
 
