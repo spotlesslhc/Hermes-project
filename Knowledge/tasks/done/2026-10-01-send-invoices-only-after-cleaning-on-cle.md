@@ -32,3 +32,11 @@ before the cleaning date; then record the rule (send only on the cleaning
 date, after 4pm Arizona) in [[zapier-automations]] and [[turno-scheduling]],
 and move this file to `done/`. Fallback if Zapier isn't the cause: build a
 4pm-AZ send job gated through `APPROVAL_REQUIRED_TOOLS`.
+
+## Resolved (2026-10-01)
+
+Bryce chose the 4pm send job over the Zapier audit. Built as a Worker cron
+with a calendar fact-check and a dashboard approval gate — see
+[[invoice-sending]]. The Zapier steps still haven't been inspected for a
+send/approve option; worth a look next time a browser session is open, in case
+something there sends early on its own.
