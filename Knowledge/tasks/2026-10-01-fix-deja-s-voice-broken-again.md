@@ -25,3 +25,19 @@ cause; autoplay blocking (Safari/iPhone) is fixed directly. **Still pending:**
 confirm the actual cause on the live dashboard once deployed, then fix it
 (quota/plan/key/voice) and move this file to `done/`. See
 [[voice-and-conversation]].
+
+## Cause found (2026-10-01)
+
+Bryce checked the on-screen note after PR #63 deployed: "ElevenLabs
+character quota used up. This request exceeds your quota of 10000. You have
+11 credits remaining, while 102 credits are required." So the voice isn't
+broken — the plan's 10,000 monthly credits are spent (the current model
+costs 1 credit per character, and Deja speaks every reply).
+
+**Decision:** Bryce is waiting for the monthly reset rather than upgrading
+for now. Deja stays on the robotic browser voice until then; check the reset
+date at `/api/speak/status`. **Still open, if it recurs:** (a) upgrade the
+ElevenLabs plan, (b) speak only the first couple of sentences of long
+replies and skip links/lists, (c) try the cheaper Flash model (roughly half
+the credits per character, slightly less rich). Move this file to `done/`
+once the voice is back and Bryce has chosen how to avoid running out again.

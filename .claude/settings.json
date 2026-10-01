@@ -29,6 +29,7 @@
     "frontend-design@claude-plugins-official": true,
     "design@knowledge-work-plugins": true,
     "cloudflare@cloudflare": true,
-    "securitymaxxing@hermes-local": true
+    "securitymaxxing@hermes-local": true,
+    "seo-aeo-geo-ultimate@hermes-local": true
   }
 }

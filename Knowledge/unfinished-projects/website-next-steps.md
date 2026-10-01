@@ -33,6 +33,12 @@ UPDATED request (PR #3); FAQ + FAQPage JSON-LD (PR #4). Decided: **no
   pasted into chat: **rotate once more**, keep it out of chats.
 - Turnstile not added; recommended because reviews publish instantly.
 
+## SEO / AEO / GEO audit (2026-10-01)
+
+Done, report in [[2026-10-01-website-seo-audit]]. Two quick Cloudflare fixes
+(Always Use HTTPS; `www` record + redirect) and a few Bryce decisions (business
+name and hours, real reviews and photos) come out of it.
+
 ## Later projects (need input, or set aside)
 
 - **Facebook reviews** (set aside by Bryce): he sent

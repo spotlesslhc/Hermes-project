@@ -109,7 +109,7 @@ guesswork. Now:
 
 The usual suspects, in rough order of likelihood:
 
-1. **Character quota used up.** Deja speaks every reply, so a small plan
+1. **Character quota used up.** *(This was the actual cause on 2026-10-01: 11 credits left of 10,000, 102 needed for one reply.)* Deja speaks every reply, so a small plan
    (the free tier is ~10k characters/month) drains fast. ElevenLabs returns
    a 401 with `quota_exceeded`. Fix: wait for the reset date shown in
    `/api/speak/status`, upgrade the plan, or shorten spoken replies.
