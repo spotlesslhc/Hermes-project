@@ -36,7 +36,14 @@ quick wins.
 - Raw captures were taken in the Claude Code container's scratch space and
   are not committed.
 
-## Confirmed defects (fix first; small and low risk)
+## Confirmed defects — **both fixed 2026-10-01**
+
+Bryce made both Cloudflare changes the same day; re-checked from outside
+afterward: `http://` and `www` variants (http and https) all end at
+`https://spotlesslhc.com/` with one redirect. What was done: Always Use HTTPS
+on (SSL/TLS → Edge Certificates), a proxied `www` CNAME to the apex, and a
+Page Rule forwarding `www.spotlesslhc.com/*` to `https://spotlesslhc.com/$1`
+(301). Original findings kept below for the record.
 
 | # | Finding | Evidence | Fix | Owner |
 |---|---|---|---|---|
@@ -97,6 +104,13 @@ from the preview build does **not** reproduce on the live site.
    markup (4); start collecting real reviews and photos (6).
 3. **Content projects:** vacation-rental page and richer FAQ answers (3, AEO
    note), once Bryce supplies real details.
+
+Cloudflare's own DNS recommendations (seen 2026-10-01) also flagged that
+`@spotlesslhc.com` has no SPF/DKIM/DMARC, so the domain name could be
+spoofed in email. Open: first confirm nothing legitimately sends mail from
+the domain (Formspree, invoicing, Wave), then add SPF and DMARC records. A
+`google-site-verification` TXT record already exists, which suggests the
+domain was verified with Google; Search Console status is still unconfirmed.
 
 Nothing above is an implementation approval. Any site change goes on a
 branch and PR in `spotlesslhc/spotlesslhc-website`; Bryce merges.
