@@ -2,7 +2,7 @@
 title: Google Business Profile — optimize the existing verified listing
 tags: [marketing, google, local-seo]
 started: 2026-09-30
-updated: 2026-09-30
+updated: 2026-10-01
 ---
 
 # Google Business Profile (GBP)
@@ -52,6 +52,22 @@ Website was previously **empty**.
    Bryce's OK on people shown.
 7. **Services list**, attributes ("Online estimates", "On-site services"),
    Q&A seeds, opening date, and a **review link** for the website/customers.
+
+## Browserbase read access (2026-10-01, in progress)
+
+`browse_google_business` is written (see [[systems/deja-read-only-tools]]) but
+**tested locally logged-out only** (see the systems note). Left to do, in order:
+
+1. Bryce adds the Browserbase key to the Cloudflare Secrets Store as
+   `BROWSERBASE_API_KEY` (before merging the PR), then **rotates the key that
+   was pasted in chat earlier** at browserbase.com/settings.
+2. Merge, then Bryce opens `/api/browserbase/login`, signs in with the separate
+   manager Google account (add it as a manager on the Business Profile first),
+   and opens `/api/browserbase/login/done`. If Google blocks/challenges the
+   login (free plan: no proxies/CAPTCHA solving), options are a paid plan with
+   proxies, or doing the login from a trusted network via live view.
+3. Confirm Deja can read the verified listing and check that the 2026-09-30
+   changes (description, website, social links) actually took.
 
 ## Research notes (2026 sources in the session)
 
