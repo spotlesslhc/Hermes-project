@@ -48,6 +48,14 @@ browser. No project id is used; the API key alone resolves the project.
 - **Secret:** `BROWSERBASE_API_KEY` in the Cloudflare Secrets Store (binding in
   `wrangler.jsonc`). **Create the secret before merging** or the deploy
   fails on the missing binding. The tool only appears for Deja once it's bound.
+- **Account decision (2026-10-01):** Bryce chose to sign in with his *main*
+  Google account instead of a separate manager account, so Deja can see
+  everything that account can. Consequence: the saved Browserbase Context
+  holds a full Google login (Gmail, Drive, etc., not just Business Profile).
+  Mitigations in code: reads only navigate to business.google.com /
+  www.google.com and never click or type. Keep Browserbase's own account
+  secured (2FA), rotate the API key if it's ever exposed, and revoke the
+  session from myaccount.google.com/device-activity if needed.
 - **One-time sign-in:** Bryce opens `/api/browserbase/login` (behind Access),
   which makes the Context on first use, opens business.google.com in a session
   with `persist: true`, and redirects him to Browserbase's live view. He types

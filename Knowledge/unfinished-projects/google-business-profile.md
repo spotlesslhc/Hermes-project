@@ -56,14 +56,14 @@ Website was previously **empty**.
 ## Browserbase read access (2026-10-01, in progress)
 
 `browse_google_business` is written (see [[systems/deja-read-only-tools]]) but
-**tested locally logged-out only** (see the systems note). Left to do, in order:
+**merged; tested locally logged-out only** (see the systems note). Left to do, in order:
 
-1. Bryce adds the Browserbase key to the Cloudflare Secrets Store as
-   `BROWSERBASE_API_KEY` (before merging the PR), then **rotates the key that
-   was pasted in chat earlier** at browserbase.com/settings.
-2. Merge, then Bryce opens `/api/browserbase/login`, signs in with the separate
-   manager Google account (add it as a manager on the Business Profile first),
-   and opens `/api/browserbase/login/done`. If Google blocks/challenges the
+1. Done 2026-10-01: PR #55 merged, `BROWSERBASE_API_KEY` secret uploaded.
+   Still open: **rotate the Browserbase key that was pasted in chat** at
+   browserbase.com/settings (and update the secret).
+2. Bryce opens `/api/browserbase/login`, signs in with his *main* Google
+   account (his decision; see the systems note for the tradeoff), and opens
+   `/api/browserbase/login/done`. If Google blocks/challenges the
    login (free plan: no proxies/CAPTCHA solving), options are a paid plan with
    proxies, or doing the login from a trusted network via live view.
 3. Confirm Deja can read the verified listing and check that the 2026-09-30
