@@ -488,7 +488,23 @@ async function browseGoogleBusiness(env, { url }) {
     }
     if (!GBP_HOSTS.has(finalUrl.hostname)) throw new Error(`The page redirected to ${finalUrl.hostname}, which isn't allowed.`);
     const text = await evalText("document.body ? document.body.innerText : ''");
-    return `${UNTRUSTED_PAGE_NOTE}\n\nURL: ${finalUrl}\nTitle: ${title}\n\n${text.slice(0, MAX_TOOL_TEXT)}${text.length > MAX_TOOL_TEXT ? "\n[truncated]" : ""}`;
+    // innerText has no link targets, so list the page's links (allowlisted
+    // hosts only) -- that lets Deja open an edit/description page by URL
+    // without the tool ever clicking anything.
+    let links = [];
+    try {
+      const raw = JSON.parse(await evalText("JSON.stringify(Array.from(document.querySelectorAll('a[href]')).map(a => ({ t: (a.innerText || a.getAttribute('aria-label') || '').trim().slice(0, 80), h: a.href })))"));
+      const seen = new Set();
+      for (const { t, h } of raw) {
+        let u; try { u = new URL(h); } catch (_) { continue; }
+        if (u.protocol !== "https:" || !GBP_HOSTS.has(u.hostname) || !t || h.length > 300 || seen.has(h)) continue;
+        seen.add(h);
+        links.push({ biz: u.hostname === "business.google.com", line: `- ${t.replace(/\s+/g, " ")}: ${h}` });
+      }
+      // Business Profile links first; Google search pages are full of long tracking links.
+      links = links.sort((a, b) => b.biz - a.biz).slice(0, 25).map((l) => l.line);
+    } catch (_) { /* links are a convenience */ }
+    return `${UNTRUSTED_PAGE_NOTE}\n\nURL: ${finalUrl}\nTitle: ${title}\n\n${text.slice(0, MAX_TOOL_TEXT)}${text.length > MAX_TOOL_TEXT ? "\n[truncated]" : ""}${links.length ? `\n\nLinks on this page (business.google.com / www.google.com only):\n${links.join("\n")}` : ""}`;
   } finally {
     if (cdp) cdp.close();
     await bbReleaseSession(env, session.id);
