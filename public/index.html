@@ -342,6 +342,7 @@
     font-size:12px; color:var(--ink-soft); cursor:pointer; user-select:none;
   }
   .voice-toggle input{accent-color:var(--teal);}
+  .volume-knob input{width:80px;}
   .ask-reply{
     font-size:14px; line-height:1.55; color:var(--ink);
     white-space:pre-wrap; margin-bottom:14px; min-height:22px;
@@ -411,6 +412,10 @@
       <label class="voice-toggle">
         <input type="checkbox" id="voiceToggle" checked>
         <span>Speak replies</span>
+      </label>
+      <label class="voice-toggle volume-knob" title="Deja's voice volume">
+        <span>Volume</span>
+        <input type="range" id="volumeKnob" min="0" max="100" step="5" value="100" aria-label="Deja voice volume">
       </label>
       <label class="voice-toggle">
         <input type="checkbox" id="wakeToggle" checked>
@@ -914,6 +919,27 @@
   // keep one shared <audio> element and prime it on the first tap, click or
   // keypress with a silent clip; every ElevenLabs reply then reuses it.
   const dejaAudio = new Audio();
+
+  // Volume knob: 0-1, remembered between visits. Applies to both the
+  // ElevenLabs audio element and the browser-voice fallback (read in speak()).
+  // iOS Safari ignores HTMLMediaElement.volume (the hardware buttons control
+  // it there), so the knob has no effect on the ElevenLabs voice on iPhone.
+  const VOLUME_KEY = 'dejaVolume';
+  let dejaVolume = 1;
+  try{
+    const saved = parseFloat(localStorage.getItem(VOLUME_KEY));
+    if(saved >= 0 && saved <= 1) dejaVolume = saved;
+  }catch(e){}
+  dejaAudio.volume = dejaVolume;
+  const volumeKnob = document.getElementById('volumeKnob');
+  if(volumeKnob){
+    volumeKnob.value = String(Math.round(dejaVolume * 100));
+    volumeKnob.addEventListener('input', () => {
+      dejaVolume = Math.min(1, Math.max(0, volumeKnob.value / 100));
+      dejaAudio.volume = dejaVolume;
+      try{ localStorage.setItem(VOLUME_KEY, String(dejaVolume)); }catch(e){}
+    });
+  }
   let dejaAudioUnlocked = false;
   function unlockDejaAudio(){
     if(dejaAudioUnlocked) return;
@@ -949,6 +975,7 @@
       window.speechSynthesis.cancel();
       const utter = new SpeechSynthesisUtterance(text);
       utter.rate = 1.02;
+      utter.volume = dejaVolume;
       utter.onstart = startUi;
       utter.onend = () => { endUi(); done(); };
       utter.onerror = () => { endUi(); done(); };
