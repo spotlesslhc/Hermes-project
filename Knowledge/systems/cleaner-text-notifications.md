@@ -137,6 +137,21 @@ never sees a password.
   text, so she splits long lists. The link opens the event for someone signed
   in to Google with the invited address, so a texted link may not work for an
   iCloud-only cleaner like Amy; the text should also say the property and day.
+- **Checking what really happened (`check_text_status`, 2026-10-02):** the
+  first two approved texts to Amy showed no sent messages in Voice and Deja
+  couldn't tell why. `check_text_status` (read-only) returns the approval
+  queue's real outcome for the last `text_cleaner` actions (approved, or
+  failed with the error) and, when a cleaner is named, looks in Bryce's Voice
+  message list for her number / the last text sent. Failures now include the
+  list of buttons/inputs Google Voice was actually showing, and
+  `check_google_voice` lists them too, so label guesses can be corrected from
+  evidence. A text whose Send click couldn't be confirmed in the thread now
+  fails as `UNCONFIRMED` instead of reporting success. Removed a too-loose
+  recipient-box fallback ("to") that could have matched a search box.
+  **Why Amy's two texts didn't appear is not known**: the live Worker
+  couldn't be inspected from the Claude Code session; run `check_text_status`
+  for Amy (it shows the stored error for #cca68574 / #04a291eb) and
+  `check_google_voice`, then tune the labels in `sendGoogleVoiceText`.
 - **Replies** land in Bryce's Google Voice, not in Hermes; he reads and
   answers them himself.
 - **Untested against live Google Voice when it shipped.** The page selectors
