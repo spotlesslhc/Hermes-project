@@ -2,8 +2,8 @@
 title: Invoice payment tracking (reported cash/Zelle/Venmo done, hands-free auto-matching next)
 tags: [bookkeeper, wave, venmo, zelle]
 started: 2026-09-28
-updated: 2026-09-28
-status: reporting for all three methods built and live-tested; hands-free (no reporting) auto-matching not started
+updated: 2026-10-01
+status: reporting live; Zelle auto-matching via bank text alerts built (needs secret + phone forwarding + first real alert to tune); Venmo not started
 ---
 
 # Invoice payment tracking (reported cash/Zelle/Venmo done, hands-free auto-matching next)
@@ -48,36 +48,31 @@ out Bryce actually got paid by Zelle, which is what surfaced the need for
 payment-method routing in the first place, and became the live test for
 `correct_invoice_payment` too.
 
-## Not started: Venmo/Zelle auto-matching
+## Zelle auto-matching via bank text alerts (built 2026-10-01)
 
-Same fundamental problem as [[cleaner-sms-3week-notifications|the Google
-Voice texting project]]: neither Venmo nor Zelle (Foothills Bank) has a
-public API for reading transaction history. Likely needs the same shape
-of solution already built for that project -- a scheduled Claude Code
-task using Claude in Chrome to periodically check Bryce's real,
-signed-in Venmo and Zelle activity, then match incoming payments to open
-Wave invoices by amount and sender name.
+Bryce said he is ready to move past manual reporting. Decisions (2026-10-01):
+daily/ongoing, and **every match goes to Deja's Pending Actions for his click
+for at least the first week** (no auto mode exists in the code yet; consider
+one only after he's watched it run). Browser-driven Venmo/Zelle logins were
+set aside: his bank sends no Zelle emails, so instead his phone forwards the
+bank's deposit **text alerts** to a Worker webhook. Design, setup steps and
+the open "tune the parser" item: [[systems/bank-text-alerts]].
 
-Open design questions, not yet discussed with Bryce:
-1. **Confidence threshold for auto-marking paid.** An exact amount + name
-   match to a single open invoice is probably safe to mark automatically
-   (mirrors what `record_invoice_payment` already does for cash). What
-   happens on an ambiguous match -- multiple open invoices, or a payer
-   name that doesn't exactly match a Wave customer name (Venmo/Zelle
-   display names vs. Wave customer names could differ)?
-2. **How often to check**, and whether it reuses the same daily scheduled
-   task as the cleaner-text pipeline or gets its own.
-3. Whether marking paid should require any confirmation at all, or run
-   fully automatically once matched -- this is reading + recording a fact
-   (not moving money), so it may not need the same approval bar as things
-   like assign_cleaner, but worth confirming with Bryce rather than
-   assuming.
+Left to do: Bryce creates `BANK_ALERT_SECRET` (the PR 61 build stays red until he does), sets up phone forwarding, and
+we adjust `parseBankAlert` against the first real alert. After a week of
+clean approvals, decide whether any matches can skip approval.
 
-## Blocked on
+## Not started: Venmo
 
-Bryce confirmed 2026-09-28: he does want the hands-free phase eventually,
-but wants to watch the reporting-based version (above) run correctly for
-a while first before building the bigger automation on top of it --
-deliberate staging, not an open question about whether to build it. Don't
-start the Venmo/Zelle auto-matching project until he says he's ready to
-move past manual reporting.
+Venmo has no text/email forwarding set up here yet. If Venmo sends email
+notifications, the same pending-action pattern can read them with the Gmail
+tool; otherwise it needs a browser. Neither Venmo nor Zelle has a public API.
+Browserbase was ruled out for banking logins (see
+[[systems/deja-read-only-tools]]); that boundary stands unless Bryce says
+otherwise.
+
+## Original design questions (answered above)
+
+1. Confidence: exact amount (and name when present) to a single open invoice.
+2. Frequency: event-driven, per alert text (no polling).
+3. Confirmation: always, for now.
