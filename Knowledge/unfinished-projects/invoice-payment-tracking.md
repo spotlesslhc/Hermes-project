@@ -58,7 +58,7 @@ set aside: his bank sends no Zelle emails, so instead his phone forwards the
 bank's deposit **text alerts** to a Worker webhook. Design, setup steps and
 the open "tune the parser" item: [[systems/bank-text-alerts]].
 
-Left to do: Bryce creates `BANK_ALERT_SECRET`, sets up phone forwarding, and
+Left to do: Bryce creates `BANK_ALERT_SECRET` (the PR 61 build stays red until he does), sets up phone forwarding, and
 we adjust `parseBankAlert` against the first real alert. After a week of
 clean approvals, decide whether any matches can skip approval.
 

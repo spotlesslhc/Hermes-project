@@ -1688,18 +1688,29 @@ async function deleteWaveInvoice(env, invoiceId) {
 // names were also off: it's paymentAccountId, not accountId, the output
 // field is invoicePayment (not payment), and paymentMethod is required
 // (InvoicePaymentMethod enum -- CASH here, matching what this tool is for).
-async function findOpenWaveInvoicesForCustomer(env, customerName) {
+// Wave returns invoices a page at a time; reading only the first 200 meant an
+// older unpaid invoice could be missed once the account grew past that. Reads up
+// to 5 pages (1,000 invoices) and stops at the first short page.
+async function fetchWaveInvoicePages(env, nodeFields) {
   const businessId = await getWaveBusinessId(env);
-  const data = await waveGraphQL(env, `query($businessId: ID!) {
-    business(id: $businessId) {
-      invoices(page: 1, pageSize: 200) {
-        edges { node { id invoiceNumber status dueDate amountDue { value } customer { name } } }
+  const all = [];
+  for (let page = 1; page <= 5; page++) {
+    const data = await waveGraphQL(env, `query($businessId: ID!, $page: Int!) {
+      business(id: $businessId) {
+        invoices(page: $page, pageSize: 200) {
+          edges { node { ${nodeFields} } }
+        }
       }
-    }
-  }`, { businessId });
-  const edges = (data.business && data.business.invoices && data.business.invoices.edges) || [];
-  return edges
-    .map((e) => e.node)
+    }`, { businessId, page });
+    const edges = (data.business && data.business.invoices && data.business.invoices.edges) || [];
+    all.push(...edges.map((e) => e.node));
+    if (edges.length < 200) break;
+  }
+  return all;
+}
+
+async function findOpenWaveInvoicesForCustomer(env, customerName) {
+  return (await fetchWaveInvoicePages(env, "id invoiceNumber status dueDate amountDue { value } customer { name }"))
     .filter((inv) => (inv.customer?.name || "").trim().toLowerCase() === customerName.trim().toLowerCase())
     .filter((inv) => inv.status !== "DRAFT" && inv.status !== "PAID");
 }
@@ -4023,6 +4034,14 @@ async function dispatchTool(env, name, input) {
   }
   if (name === "record_invoice_payment") {
     if (typeof input.amount !== "number" || input.amount <= 0) throw new Error("amount must be a positive number");
+    // A card made from a bank text carries the amount due it was matched on. The
+    // invoice may have been paid, reported in chat or edited since, so re-read it.
+    if (input.expect_amount_due !== undefined) {
+      const open = await findOpenWaveInvoicesForCustomer(env, input.customer_name);
+      const inv = open.find((i) => String(i.invoiceNumber) === String(input.invoice_number));
+      if (!inv) throw new Error(`Invoice #${input.invoice_number} is no longer open (already paid, or changed), so nothing was recorded.`);
+      if (Math.abs(parseFloat(inv.amountDue.value) - Number(input.expect_amount_due)) > 0.01) throw new Error(`Invoice #${input.invoice_number} now shows $${inv.amountDue.value} due, not the $${Number(input.expect_amount_due).toFixed(2)} this card was made for, so nothing was recorded.`);
+    }
     const record = await recordCustomerInvoicePayment(env, input);
     const destination = input.account_name || "Cash on Hand";
     return `Recorded $${record.amount.toFixed(2)} paid on invoice #${record.invoiceNumber} (${input.customer_name}), dated ${record.date}, via ${record.method}, into ${destination}.`;
@@ -4923,90 +4942,149 @@ async function requireZapierWebhookSecret(request, env) {
 // SMS forwarder -- see Knowledge/systems/bank-text-alerts.md). Nothing is ever
 // marked paid from this route: a clean match only becomes a Pending Action
 // (record_invoice_payment) for Bryce to Approve on the dashboard, every time.
-// Texts are untrusted input -- they are only parsed for an amount and a name.
+// Texts are untrusted input -- they are only parsed for an amount and a name,
+// and anything the parser is not sure about goes to a human, never to a guess.
+
+const BANK_ALERT_RETRY_WINDOW_SECONDS = 15 * 60; // phone retries only; NOT a "same payment" window
+const BANK_ALERT_LOCK_SECONDS = 120;
+const BANK_ALERT_INCOMING = /\b(received|deposit(?:ed)?|credited|sent you|paid you)\b/i;
+const BANK_ALERT_OUTGOING = /\b(withdraw|withdrawal|debit|purchase|payment to|paid to|you sent|declined|overdraft|low balance|balance (?:is|below))\b/i;
+const bankMoney = (str) => Math.round(parseFloat(String(str).replace(/,/g, "")) * 100) / 100;
 
 function parseBankAlert(text) {
   const t = String(text || "").replace(/\s+/g, " ").trim();
-  const amt = t.match(/\$\s?([\d,]+(?:\.\d{1,2})?)/);
-  const amount = amt ? Math.round(parseFloat(amt[1].replace(/,/g, "")) * 100) / 100 : null;
-  const looksOutgoing = /\b(withdraw|withdrawal|debit|purchase|sent|payment to|paid to|declined|overdraft|low balance|balance (is|below))\b/i.test(t) && !/\b(deposit|deposited|received|credit)\b/i.test(t);
-  const from = t.match(/\bfrom\s+([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*){0,3})/i);
-  let name = from ? from[1].split(/\s+(?:on|for|via|to|at|has|was|into|in|with|ref)\b/i)[0].trim() : null;
-  return { amount, name, outgoing: looksOutgoing, zelle: /zelle/i.test(t) };
+  // Several dollar figures usually means a balance is in the text too. Use the
+  // one next to a deposit word; with no such anchor, only trust a lone figure.
+  const figures = [...t.matchAll(/\$\s?([\d,]+(?:\.\d{1,2})?)/g)].map((m) => bankMoney(m[1]));
+  const anchored = t.match(/\b(?:received|deposit(?:ed)?|credited|sent you|paid you)\b[^$]{0,40}\$\s?([\d,]+(?:\.\d{1,2})?)/i)
+    || t.match(/\$\s?([\d,]+(?:\.\d{1,2})?)\s+(?:was |has been )?(?:deposited|received|credited)\b/i);
+  const distinct = [...new Set(figures)];
+  const amount = anchored ? bankMoney(anchored[1]) : (distinct.length === 1 ? distinct[0] : null);
+  const from = t.match(/\bfrom\s+([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*){0,3})/i)
+    || t.match(/(?:^|[:.]\s*)([A-Za-z][A-Za-z'.\-]*(?:\s+[A-Za-z][A-Za-z'.\-]*){0,2})\s+sent you\b/i);
+  const name = from ? from[1].split(/\s+(?:on|for|via|to|at|has|was|into|in|with|ref)\b/i)[0].trim() : null;
+  return {
+    amount, name,
+    incoming: BANK_ALERT_INCOMING.test(t),
+    outgoingWords: BANK_ALERT_OUTGOING.test(t),
+    zelle: /zelle/i.test(t),
+    ambiguousAmount: !anchored && distinct.length > 1
+  };
 }
 
-// Candidate open invoices whose amount due equals the deposit. If the text
-// named a sender and some candidates' customer names share a word with it,
-// prefer those. Returns the candidate list; the caller only auto-proposes
-// when exactly one remains.
+// Open invoices whose amount due equals the deposit. When the text names a
+// sender, only invoices whose customer shares a word with that name count: a
+// name that matches nobody is a "needs a human", never a fall-back to
+// amount-only (that proposed the wrong customer's invoice).
 function matchInvoicesForAlert(alert, invoices) {
   const byAmount = invoices.filter((i) => Math.abs(parseFloat(i.amountDue?.value || 0) - alert.amount) < 0.01);
-  if (alert.name) {
-    const words = alert.name.toLowerCase().split(/[^a-z]+/).filter((w) => w.length >= 3);
-    const byName = byAmount.filter((i) => (i.customer?.name || "").toLowerCase().split(/[^a-z]+/).some((w) => words.includes(w)));
-    if (byName.length) return byName;
-  }
-  return byAmount;
+  const words = alert.name ? alert.name.toLowerCase().split(/[^a-z]+/).filter((w) => w.length >= 3) : [];
+  if (!words.length) return byAmount;
+  return byAmount.filter((i) => (i.customer?.name || "").toLowerCase().split(/[^a-z]+/).some((w) => words.includes(w)));
 }
 
 async function listOpenWaveInvoiceNodes(env) {
-  const businessId = await getWaveBusinessId(env);
-  const data = await waveGraphQL(env, `query($businessId: ID!) {
-    business(id: $businessId) {
-      invoices(page: 1, pageSize: 200) {
-        edges { node { id invoiceNumber status dueDate amountDue { value } customer { name } } }
-      }
-    }
-  }`, { businessId });
-  const edges = (data.business && data.business.invoices && data.business.invoices.edges) || [];
-  return edges.map((e) => e.node).filter((i) => i.status !== "DRAFT" && i.status !== "PAID");
+  return (await fetchWaveInvoicePages(env, "id invoiceNumber status dueDate amountDue { value } customer { name }"))
+    .filter((i) => i.status !== "DRAFT" && i.status !== "PAID");
 }
 
 // Its own secret (BANK_ALERT_SECRET), separate from Zapier's: Secrets Store
 // values can't be read back, and this one lives on Bryce's phone, so a lost
 // phone only exposes this one narrow route (which can only queue cards).
+// Optional extra check: if BANK_ALERT_SENDERS (comma-separated numbers or short
+// codes) is set, the forwarder must send a "sender" field that matches one;
+// anything else is ignored. That stops a text from a random number that happens
+// to contain the right words from becoming a card.
 async function handleBankAlertWebhook(request, env) {
   const provided = request.headers.get("x-bank-alert-secret") || "";
   const expected = env.BANK_ALERT_SECRET ? await env.BANK_ALERT_SECRET.get() : "";
   if (!expected || !timingSafeEqual(provided, expected)) return json({ error: "Unauthorized" }, { status: 401 });
 
   const raw = (await request.text()).slice(0, 2000);
-  let text = raw;
-  try { const j = JSON.parse(raw); text = String(j.text ?? j.message ?? j.body ?? raw); } catch { /* plain-text body */ }
+  let text = raw, sender = "";
+  try { const j = JSON.parse(raw); text = String(j.text ?? j.message ?? j.body ?? raw); sender = String(j.sender ?? j.from ?? j.number ?? ""); } catch { /* plain-text body */ }
   if (!text.trim()) return json({ error: "Empty alert" }, { status: 400 });
-
-  // The same text arriving twice (phone retries, double automations) must not
-  // create two cards.
-  const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text.trim())))).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
-  if (await env.HERMES_KV.get(`bankalert:${digest}`)) return json({ ok: true, duplicate: true });
-  await env.HERMES_KV.put(`bankalert:${digest}`, "1", { expirationTtl: 3 * 24 * 3600 });
-
-  const alert = parseBankAlert(text);
-  const tell = async (msg) => { try { await sendTelegramMessage(env, msg); } catch (_) { /* Activity log still has it */ } };
   const snippet = text.replace(/\s+/g, " ").trim().slice(0, 160);
 
-  if (alert.amount === null || alert.outgoing) {
-    await appendLog(env, { who: "Bookkeeper", what: `Bank text ignored (${alert.amount === null ? "no dollar amount" : "looks like money going out"}): ${snippet}` });
-    return json({ ok: true, ignored: true });
+  const allowed = String(env.BANK_ALERT_SENDERS || "").split(",").map((x) => x.replace(/\D/g, "") || x.trim().toLowerCase()).filter(Boolean);
+  if (allowed.length) {
+    const who = sender.replace(/\D/g, "") || sender.trim().toLowerCase();
+    if (!who || !allowed.includes(who)) {
+      await appendLog(env, { who: "Bookkeeper", what: `Bank text ignored (not from an allowed sender): ${snippet}` });
+      return json({ ok: true, ignored: true });
+    }
   }
+
+  // Retry protection, in two parts. A short "done" marker stops a phone that
+  // resends the same text; it is only written after the alert was handled, so a
+  // failure in between leaves the retry free to run. A short lock covers two
+  // copies arriving at the same moment. Neither is a "same payment" rule: a
+  // second identical payment later is processed (and the one-card-per-invoice
+  // check below stops duplicate cards for the same invoice).
+  const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text.trim())))).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+  if (await env.HERMES_KV.get(`bankalert:${digest}`)) {
+    await appendLog(env, { who: "Bookkeeper", what: `Bank text ignored (the same text was just handled): ${snippet}` });
+    return json({ ok: true, duplicate: true });
+  }
+  if (await env.HERMES_KV.get(`bankalert_lock:${digest}`)) return json({ ok: true, duplicate: true, inProgress: true });
+  await env.HERMES_KV.put(`bankalert_lock:${digest}`, "1", { expirationTtl: BANK_ALERT_LOCK_SECONDS });
+  try {
+    const result = await processBankAlert(env, text, snippet);
+    await env.HERMES_KV.put(`bankalert:${digest}`, "1", { expirationTtl: BANK_ALERT_RETRY_WINDOW_SECONDS });
+    await env.HERMES_KV.delete(`bankalert_lock:${digest}`);
+    return json(result);
+  } catch (err) {
+    await env.HERMES_KV.delete(`bankalert_lock:${digest}`);
+    await appendLog(env, { who: "Bookkeeper", what: `Bank text could not be processed (${err.message}); the phone can retry: ${snippet}` });
+    return json({ error: "Could not process this alert; try again" }, { status: 500 });
+  }
+}
+
+async function processBankAlert(env, text, snippet) {
+  const alert = parseBankAlert(text);
+  const tell = async (msg) => { try { await sendTelegramMessage(env, msg); } catch (_) { /* Activity log still has it */ } };
+  const needsHuman = async (why) => {
+    const label = `${alert.amount !== null ? `$${alert.amount.toFixed(2)}` : "amount unclear"}${alert.name ? ` from ${alert.name}` : ""}`;
+    await appendLog(env, { who: "Bookkeeper", what: `Bank deposit text (${label}) needs a human: ${why}` });
+    await tell(`Deposit text (${label}) -- ${why}. Tell Deja which invoice it covers if it's a customer payment.`);
+    return { ok: true, matched: false };
+  };
+  const ignore = async (why) => {
+    await appendLog(env, { who: "Bookkeeper", what: `Bank text ignored (${why}): ${snippet}` });
+    return { ok: true, ignored: true };
+  };
+
+  if (!alert.incoming) return await ignore("doesn't say money was received or deposited");
+  if (alert.outgoingWords) return await needsHuman("it reads like both a deposit and a payment out");
+  if (alert.amount === null) return await needsHuman(alert.ambiguousAmount ? "it has several dollar figures and none sits next to the deposit" : "no dollar amount found");
+  if (!alert.zelle) return await needsHuman("the text doesn't say Zelle, and only Zelle deposits are matched here");
 
   const invoices = await listOpenWaveInvoiceNodes(env);
   const matches = matchInvoicesForAlert(alert, invoices);
   if (matches.length !== 1) {
-    const why = matches.length === 0 ? `no open Wave invoice has exactly $${alert.amount.toFixed(2)} due` : `${matches.length} open invoices match $${alert.amount.toFixed(2)} (${matches.map((m) => `#${m.invoiceNumber} ${m.customer?.name}`).join(", ")})`;
-    await appendLog(env, { who: "Bookkeeper", what: `Bank deposit text for $${alert.amount.toFixed(2)}${alert.name ? ` from ${alert.name}` : ""} needs a human: ${why}` });
-    await tell(`Deposit text: $${alert.amount.toFixed(2)}${alert.name ? ` from ${alert.name}` : ""} -- ${why}. Tell Deja which invoice it covers if it's a customer payment.`);
-    return json({ ok: true, matched: false });
+    const why = matches.length === 0
+      ? `no open Wave invoice for ${alert.name ? `a customer matching "${alert.name}" with` : ""} exactly $${alert.amount.toFixed(2)} due`
+      : `${matches.length} open invoices match $${alert.amount.toFixed(2)} (${matches.map((m) => `#${m.invoiceNumber} ${m.customer?.name || ""}`.trim()).join(", ")})`;
+    return await needsHuman(why);
   }
 
   const inv = matches[0];
+  // One card per invoice: a re-worded second alert for the same deposit must not
+  // stack a second card on the same invoice.
+  const waiting = (await listPendingActions(env)).find((a) => a.tool === "record_invoice_payment" && a.input?.bank_alert && String(a.input.invoice_number) === String(inv.invoiceNumber));
+  if (waiting) {
+    await appendLog(env, { who: "Bookkeeper", what: `Bank deposit text matches invoice #${inv.invoiceNumber}, which already has a card waiting for approval; no second card made` });
+    return { ok: true, duplicate: true, pending: waiting.id };
+  }
   const pending = await createPendingAction(env, {
     tool: "record_invoice_payment",
-    input: { customer_name: inv.customer.name, amount: alert.amount, invoice_number: String(inv.invoiceNumber), payment_method: "zelle", date: toDateOnly(new Date()) },
-    reason: `Bank text: "${snippet}" -- matches invoice #${inv.invoiceNumber} (${inv.customer.name}, $${alert.amount.toFixed(2)} due)${alert.zelle ? "" : " -- text didn't say Zelle, check the source"}`
+    // bank_alert + expect_amount_due: at approval the invoice is re-read and the
+    // payment is refused if it is no longer open or its amount due has changed.
+    input: { customer_name: inv.customer.name, amount: alert.amount, invoice_number: String(inv.invoiceNumber), payment_method: "zelle", date: toDateOnly(new Date()), bank_alert: true, expect_amount_due: alert.amount },
+    reason: `Bank text: "${snippet}" -- matches invoice #${inv.invoiceNumber} (${inv.customer.name}, $${alert.amount.toFixed(2)} due)${alert.name ? "" : " -- the text had no sender name, so this is matched on amount alone; check it"}`
   });
   await tell(`Deposit text of $${alert.amount.toFixed(2)} matches invoice #${inv.invoiceNumber} (${inv.customer.name}). Approve it on the dashboard to mark it paid.`);
-  return json({ ok: true, pending: pending.id });
+  return { ok: true, pending: pending.id };
 }
 
 async function handleReservation(request, env) {
