@@ -116,3 +116,29 @@ browser. No project id is used; the API key alone resolves the project.
   Venmo, and Zelle logins stay out of any cloud browser.
 
 See [[unfinished-projects/google-business-profile]].
+
+## `browse_web`: other sites, with no login (2026-10-02)
+
+Bryce wants Deja to be able to look things up on other sites, including Google
+searches, but only on his say-so. Opening more of Google in the **signed-in**
+session was considered and rejected (that account is Bryce's main one, so Maps
+history, account pages and redirectors are out of bounds); `browse_web` covers the
+need instead because it uses a **separate Browserbase session with no saved
+login**, so there is no personal data for a page to reach.
+
+- Read-only (text and links). https public hostnames only: no IP addresses,
+  single-label or internal names, ports, embedded credentials, or names that
+  embed an IP (the nip.io style).
+- **What runs without approval is deliberately tiny**, enforced in code in the
+  chat loop (`browseWebNeedsNoApproval`), because the URL itself can carry data
+  out: only the *front page* of a site Bryce named in his own message (an email
+  address or part of a longer name doesn't count), or a Google search whose words
+  appear in his message. Anything else (a path, a query, a link found on a page)
+  waits on the dashboard with the exact URL on the card.
+- Also gated after the conversation has read email or web content (see
+  [[approval-queue]], taint gate), and capped at 3 pages per request.
+- Where a page ends up after redirects is re-checked and nothing is read from a
+  place `browse_web` wouldn't have opened. Links are limited to valid public
+  URLs (15 max) and are untrusted.
+- Residual: a page can run script in that logged-out session before the redirect
+  check; there is nothing in it to steal.
