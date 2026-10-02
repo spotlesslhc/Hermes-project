@@ -39,7 +39,9 @@ by this job. See [[zapier-automations]] and [[turno-scheduling]].
    i.e. 7% family friend + 3% cash entered as one discount in Wave's
    separate discount field). Any other difference (one-off discount, typo,
    rate change, tax) is held as a problem, not sent; Bryce fixes the draft
-   in Wave or sends it himself. The check runs before any date fix so a
+   in Wave or sends it himself. **If a standing-discount property's draft has no discount at all**
+   (total == lines), the Bookkeeper adds it automatically by recreating the
+   draft with the discount (same date, new invoice number, logged). The check runs before any date fix so a
    recreated draft can't silently drop a one-off discount. Date
    fixes preserve the original line price.
 5. **Anything else is a problem**, never auto-fixed or sent: no clean on that

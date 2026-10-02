@@ -1494,6 +1494,7 @@ async function setInvoiceDiscount(env, { property, percent, note }) {
   return { what, all: discounts };
 }
 
+// (Missing standing discounts are added automatically by the 4pm check.)
 // Amount check: every line should be priced at its catalog item's standard
 // rate, and the total should equal those lines minus that property's standing
 // discount (if any; see DEFAULT_INVOICE_DISCOUNTS). Anything else -- a
@@ -1578,12 +1579,25 @@ function auditInvoiceAgainstCalendar(invoice, events, moves, siblings, cancellat
   };
 }
 
+// A property with a standing discount whose draft has NO discount applied
+// (total == lines). Returns {percent, expected} so the Bookkeeper can add it;
+// anything else off is left to invoiceAmountProblem to hold back.
+function missingStandingDiscount(invoice, discounts) {
+  const number = invoiceStreetNumbers(invoice)[0];
+  const percent = number && discounts[number]?.percent;
+  if (!percent) return null;
+  const lines = (invoice.items || []).reduce((sum, i) => sum + Number(i.price || 0) * Number(i.quantity || 1), 0);
+  const total = parseFloat(invoice.total?.value);
+  if (!(lines > 0) || Math.abs(total - lines) > 0.02) return null;
+  return { percent, expected: Math.round(lines * (100 - percent)) / 100 };
+}
+
 // Corrects a draft's date by creating a replacement and then deleting the
 // original (invoiceCreate/invoiceDelete are the Wave mutations already proven
 // here). The replacement is created FIRST so a failure never leaves no
 // invoice. Only ever called for DRAFTs. The old number/id are logged so it
 // can be reversed.
-async function moveDraftInvoiceDate(env, invoice, newDate, discounts = {}) {
+async function moveDraftInvoiceDate(env, invoice, newDate, discounts = {}, reason = "the clean was postponed") {
   if (invoice.status !== "DRAFT") throw new Error(`Invoice #${invoice.invoiceNumber} is ${invoice.status}, not a draft; left alone.`);
   const businessId = await getWaveBusinessId(env);
   const data = await waveGraphQL(env, `mutation($input: InvoiceCreateInput!) {
@@ -1616,7 +1630,7 @@ async function moveDraftInvoiceDate(env, invoice, newDate, discounts = {}) {
   }
   await appendLog(env, {
     who: "Bookkeeper",
-    what: `Moved draft invoice date for ${invoice.customer.name}: #${invoice.invoiceNumber} (${invoice.invoiceDate}, id ${invoice.id}) replaced by #${created.invoice.invoiceNumber} dated ${newDate} (id ${created.invoice.id}) because the clean was postponed. To reverse: recreate the draft with the old date.`
+    what: `Moved draft invoice date for ${invoice.customer.name}: #${invoice.invoiceNumber} (${invoice.invoiceDate}, id ${invoice.id}) replaced by #${created.invoice.invoiceNumber} dated ${newDate} (id ${created.invoice.id}) because ${reason}. To reverse: recreate the draft as it was.`
   });
   return created.invoice;
 }
@@ -1632,7 +1646,7 @@ async function auditDraftInvoices(env, { fix }) {
   const moves = await getCleanMoves(env);
   const cancellations = await getCleanCancellations(env);
   const discounts = await getInvoiceDiscounts(env);
-  const report = { today, ready: [], notYetDue: [], moved: [], cancelled: [], problems: [] };
+  const report = { today, ready: [], notYetDue: [], moved: [], discountAdded: [], cancelled: [], problems: [] };
 
   for (const inv of drafts) {
     const label = `#${inv.invoiceNumber} ${inv.customer?.name || "?"} ${inv.invoiceDate} $${inv.total?.value}`;
@@ -1652,17 +1666,32 @@ async function auditDraftInvoices(env, { fix }) {
       continue;
     }
 
+    // A property that should always have its standing discount but doesn't:
+    // add it (recreate the draft with the discount, same date).
+    let current = inv;
+    const missing = missingStandingDiscount(inv, discounts);
+    if (missing) {
+      if (!fix) { report.discountAdded.push({ id: inv.id, label, note: `would add the standing ${missing.percent}% discount` }); continue; }
+      try {
+        const replacement = await moveDraftInvoiceDate(env, inv, inv.invoiceDate, discounts, `it was missing its standing ${missing.percent}% discount`);
+        current = { ...inv, id: replacement.id, invoiceNumber: replacement.invoiceNumber, total: { value: String(missing.expected) } };
+        report.discountAdded.push({ id: current.id, label, note: `added the standing ${missing.percent}% discount as #${replacement.invoiceNumber}` });
+      } catch (err) {
+        report.problems.push({ id: inv.id, label, reason: `couldn't add the standing discount: ${err.message}` });
+        continue;
+      }
+    }
+
     // Check the amount BEFORE any date fix: recreating a draft would silently
     // drop an unexpected one-off discount.
-    const preIssue = invoiceAmountProblem(inv, discounts);
-    if (preIssue) { report.problems.push({ id: inv.id, label, reason: `amount doesn't check out: ${preIssue}` }); continue; }
+    const preIssue = invoiceAmountProblem(current, discounts);
+    if (preIssue) { report.problems.push({ id: current.id, label, reason: `amount doesn't check out: ${preIssue}` }); continue; }
 
-    let current = inv;
     if (result.verdict === "move") {
       if (!fix) { report.moved.push({ id: inv.id, label, note: `would move to ${result.newDate} (${result.via})` }); continue; }
       try {
-        const replacement = await moveDraftInvoiceDate(env, inv, result.newDate, discounts);
-        current = { ...inv, id: replacement.id, invoiceNumber: replacement.invoiceNumber, invoiceDate: result.newDate };
+        const replacement = await moveDraftInvoiceDate(env, current, result.newDate, discounts);
+        current = { ...current, id: replacement.id, invoiceNumber: replacement.invoiceNumber, invoiceDate: result.newDate };
         report.moved.push({ id: current.id, label, note: `moved to ${result.newDate} as #${replacement.invoiceNumber} (${result.via})` });
       } catch (err) {
         report.problems.push({ id: inv.id, label, reason: `date fix failed: ${err.message}` });
