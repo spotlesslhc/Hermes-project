@@ -126,3 +126,17 @@ Calendar (add the street number) so assign_cleaner can match it.
 The "Pay is $X" line in each event's description (documented above) is
 also what [[payroll]] reads to compute what's owed to each cleaner —
 built 2026-09-26, see that doc for how it works.
+
+## Cleaner says they never got an invite (`resend_cleaner_invites`)
+
+Amy (iCloud address, no Google Calendar app) relies only on invite emails.
+2026-10-02: her address on the events was correct (`abyers402@icloud.com` —
+capitalisation doesn't matter) and showed "awaiting", but her inbox was empty.
+So the calendar side was fine and the email wasn't arriving (or was sitting
+in junk). `resendCleanerInvites` re-sends unanswered invites by removing and
+re-adding the guest (Google only emails newly added guests; the removal uses
+`sendUpdates=none` so no cancellation goes out). If the re-sent invites still
+don't arrive, check Amy's iCloud **Junk** folder and that her real address is
+exactly that one; the fallback is the cleaner text reminders
+([[unfinished-projects/cleaner-sms-3week-notifications]]) or sharing the event
+link by text.
