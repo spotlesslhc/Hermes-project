@@ -27,6 +27,11 @@ updated: 2026-09-28
 > (`answerAdvanceAsk`), then to the paused text-approval batch. If nobody
 > else is available Bryce gets a plain alert instead.
 
+> **Deja-driven texting added 2026-10-02.** Separate from the paused daily
+> reminders above: the Scheduler can now text a cleaner itself, from Bryce's
+> Google Voice, via a Browserbase cloud browser (no kept-online Claude Code
+> session needed). See "Texting through Browserbase" at the bottom.
+
 Built 2026-09-27/28. Full build history and rejected alternatives (Twilio,
 Google-Voice-via-Deja-login) are in
 [[unfinished-projects/cleaner-sms-3week-notifications]] if ever needed —
@@ -98,3 +103,140 @@ path-scoped policy, which the bare `*.workers.dev` address can't do
   after 48h of silence (added 2026-09-29).
 - Not yet proven against a real end-to-end cycle (real cleaning → real
   Telegram approval → real staged text) — watch the first few live days.
+
+## Texting through Browserbase (2026-10-02)
+
+Why: Amy (iCloud, no Google Calendar app) never received her invite emails,
+so Bryce wanted the scheduling agent to text her instead. This is *not* the
+rejected "Deja logs into Google Voice with stored credentials" idea — Bryce
+signs in once himself in a Browserbase live view and the login is kept as a
+Browserbase Context (same pattern as the Google Business tools); the Worker
+never sees a password.
+
+- **One-time setup:** open `/api/browserbase/voice-login`, sign in to Google
+  Voice in the window that opens (use the Google account that owns his
+  Voice number), then open `/api/browserbase/voice-login/done`. Ask Deja to
+  run `check_google_voice` to confirm. If Google challenges the cloud
+  browser or the login expires, redo it.
+- **Numbers:** `set_cleaner_phone` (Deja, no approval) saves a roster
+  cleaner's number in KV `cleaner_phones`. Only roster cleaners with a saved
+  number can ever be texted — never an arbitrary number.
+- **Sending:** `text_cleaner` (custom text) and `text_cleaner_schedule` (a
+  standard list of a cleaner's next 14 days: property, day, time only; no door
+  codes or customer details). Both end in a **dashboard approval** showing the
+  exact recipient and message (`text_cleaner` is in `APPROVAL_REQUIRED_TOOLS`;
+  the schedule tool also sends a Telegram nudge). On approval
+  `sendGoogleVoiceText` drives voice.google.com: new message → recipient →
+  Enter → checks the number's last 4 digits appear → types the message →
+  clicks Send → checks the text appears in the thread. Any failure before the
+  Send click sends nothing; only `voice.google.com` is ever opened.
+- **Invite links:** `get_clean_invite_links` (read-only) returns a cleaner's
+  upcoming cleans with each event's Google Calendar `htmlLink`, so Deja can
+  paste links into `text_cleaner`. Property, date, time, response and link only;
+  never descriptions (door codes, customer contacts). 600-character limit per
+  text, so she splits long lists. The link opens the event for someone signed
+  in to Google with the invited address, so a texted link may not work for an
+  iCloud-only cleaner like Amy; the text should also say the property and day.
+- **Checking what really happened (`check_text_status`, 2026-10-02):** the
+  first two approved texts to Amy showed no sent messages in Voice and Deja
+  couldn't tell why. `check_text_status` (read-only) returns the approval
+  queue's real outcome for the last `text_cleaner` actions (approved, or
+  failed with the error) and, when a cleaner is named, looks in Bryce's Voice
+  message list for her number / the last text sent. Failures now include the
+  list of buttons/inputs Google Voice was actually showing, and
+  `check_google_voice` lists them too, so label guesses can be corrected from
+  evidence. A text whose Send click couldn't be confirmed in the thread now
+  fails as `UNCONFIRMED` instead of reporting success. Removed a too-loose
+  recipient-box fallback ("to") that could have matched a search box.
+  **Why Amy's two texts didn't appear is not known**: the live Worker
+  couldn't be inspected from the Claude Code session; run `check_text_status`
+  for Amy (it shows the stored error for #cca68574 / #04a291eb) and
+  `check_google_voice`, then tune the labels in `sendGoogleVoiceText`.
+- **Send step rewrite (2026-10-02, task "texts not sending"):** `check_text_status`
+  showed both approved link texts to Amy as UNCONFIRMED and Bryce saw nothing
+  in Voice, with login ruled out. Without live access the cause couldn't be
+  reproduced, so the send step was made stricter and self-documenting
+  (`runVoiceCompose`): it reads the compose box after typing (aborts if empty
+  or only partly filled, so long/newline/link texts can't half-enter), finds the
+  Send button by exact label nearest the compose box (the old substring
+  fallback `"send"` could click "Send new message" instead of Send), nudges the
+  box if Send is disabled (framework didn't register the inserted text), clicks,
+  and only reports success if the box emptied and the text is in the thread; a
+  message left in the box is reported as not sent. Screenshots of each step
+  (`start`, `recipient`, `typed`, `after_send`, `error`) are kept in KV for a
+  day and viewable at `/api/voice-screenshot?step=...` (behind Access).
+  **`test_voice_compose`** (no approval) runs the whole flow as a dry run that
+  never clicks Send, for diagnosing by eye; try a short plain message with no
+  links first, then the real one. If it still fails, the screenshots and the
+  controls list in the error say exactly where.
+- **Send button is an icon (2026-10-02, from Bryce's screenshot):** in Google
+  Voice the compose box ("Type a message") has an icon-only paper-plane at its
+  right end — no visible "Send" text, and the page also has a keypad panel on
+  the right ("Call as", "Enter a name or number") and an attach-image button on
+  the left. `findSend` therefore looks first for an exact `Send`/`Send message`
+  label and otherwise takes the small button on the compose box's row just to
+  its right (not the left attach button, not the keypad panel); the outcome
+  reports which method found it. If the box doesn't clear after the click it
+  presses Enter once (Voice sends on Enter).
+- **Send button stayed disabled (2026-10-02, dry run):** `test_voice_compose`
+  found "Send message" by label with the message fully typed, but the button
+  stayed disabled even after nudging, i.e. Voice didn't accept the recipient
+  (the number was just text in the To box; the old check passed because the
+  suggestion dropdown also contained the digits). The compose flow now (1)
+  opens the cleaner's **existing thread** by clicking its left-list row (by name
+  or number) and verifies the thread header shows the number, which also needs
+  no recipient step; otherwise (2) types the number in the new-message box and
+  **clicks the suggestion** directly under it (never the dialer panel on the
+  right) instead of pressing Enter. Either way the real proof is the Send
+  button becoming enabled. New screenshot step `suggest`. Not yet re-run live.
+- **Search route first (Bryce, 2026-10-02):** from a screenshot of the cloud
+  browser's Voice page, the flow is now: click the **Search Google Voice** box,
+  type the number, click the matching number or the contact (e.g. Amy) in the
+  dropdown, which opens the thread, and only proceed if the thread header
+  shows the number. Fallbacks, in order: the cleaner's row in the left list,
+  then the new-message flow. Screenshot step `search`.
+- **Search results fix (2026-10-02, second dry run):** the dry run stopped
+  with "couldn't find the new-message button" and a controls list showing
+  search results with "Message 909 264 0249" / "Call 909 264 0249" options,
+  because the search stayed active (the dropdown click didn't match, then the
+  fallbacks ran against the results page). `pickSuggestion` now prefers the
+  **"Message <number>"** option, then the contact row (by name), then any row
+  with the number, only below/left of the search box, and **never a "Call ..."
+  option** (that would dial). If the search route doesn't open the thread the
+  inbox is reloaded (`reset`) before the fallbacks, so a stale search can't
+  hide the buttons.
+- **Replies** land in Bryce's Google Voice, not in Hermes; he reads and
+  answers them himself.
+- **Untested against live Google Voice when it shipped.** The page selectors
+  (labels like "Send new message", "Type a message", "Send message") are
+  best guesses at Google Voice's current labels. Expect to tune them on the
+  first real attempt: the first text is approved by Bryce, and a failure
+  before Send is harmless. The Activity log records each attempt.
+- The paused 3-week reminder system could be switched to use this instead of
+  the staged-text/Claude Code route if Bryce wants it resumed.
+
+## Established method for sending Amy her cleaning invites (confirmed 2026-10-02)
+
+Proven live: two approved link texts to Amy went out and showed in her Google
+Voice thread. Amy has no Google Calendar app and her invite emails never
+reached her inbox, so this is how she gets her cleans from now on:
+
+1. Calendar invite goes out as usual (`assign_cleaner`, or
+   `resend_cleaner_invites` if she says she never saw it).
+2. Ask Deja to text Amy her upcoming cleans. Deja pulls the links with
+   `get_clean_invite_links` and queues `text_cleaner` (600 characters max, so
+   she splits long lists into several texts of 1-3 cleans, each with its link
+   and the property/day/time written out, since the link may not open for an
+   iCloud-only cleaner).
+3. Bryce approves each text in Pending Actions, **one at a time**, and Deja
+   confirms with `check_text_status` (and the thread in Google Voice) before
+   the next. Never treat "approved" as "delivered".
+4. If a send fails or is UNCONFIRMED, run `test_voice_compose` (sends nothing)
+   and check `/api/voice-screenshot?step=...` before retrying. If Voice
+   reports an expired login, redo `/api/browserbase/voice-login`.
+
+Why the flow works: it searches Amy's number in the Google Voice search box
+and opens her **existing thread**, requiring the header to show her number
+before typing anything; the Send button must be enabled, the box must clear,
+and the text must appear in the thread. Same method applies to any roster
+cleaner once their number is saved with `set_cleaner_phone`.

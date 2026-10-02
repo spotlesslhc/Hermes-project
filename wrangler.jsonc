@@ -127,6 +127,9 @@
     // Facebook/Instagram follower counts and post activity. See
     // runWeeklySocialDigest in src/index.js and
     // Knowledge/unfinished-projects/social-media-ads-agent.md.
-    "crons": ["0 15 * * 1", "0 15 * * *", "30 15 * * 1"]
+    // Every day at 4pm America/Phoenix (23:00 UTC) -- fact-checks draft Wave
+    // invoices against the Cleans calendar and queues the send for Bryce's
+    // approval. See runInvoiceSendCheck and Knowledge/systems/invoice-sending.md.
+    "crons": ["0 15 * * 1", "0 15 * * *", "30 15 * * 1", "0 23 * * *"]
   }
 }
