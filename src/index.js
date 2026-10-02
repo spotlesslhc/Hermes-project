@@ -4738,25 +4738,6 @@ async function handleZapierStatusWebhook(request, env) {
   return json({ ok: true });
 }
 
-async function handlePendingList(env) {
-  return json(await listPendingActions(env));
-}
-
-async function handlePendingDecide(request, env) {
-  let body;
-  try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, { status: 400 }); }
-  const { id, decision } = body || {};
-  if (decision !== "approve" && decision !== "deny") {
-    return json({ error: 'decision must be "approve" or "deny"' }, { status: 400 });
-  }
-  try {
-    const record = await resolvePendingAction(env, id, decision);
-    return json({ ok: true, record });
-  } catch (err) {
-    return json({ error: err.message }, { status: err.status || 400 });
-  }
-}
-
 // ---- Cloudflare Access: verify the request really came through Access ------
 //
 // Nothing inside this Worker authenticates the dashboard API; it relies on
@@ -4847,15 +4828,34 @@ async function checkAccessJwt(request, env, pathname) {
   return null;
 }
 
+async function handlePendingList(env) {
+  return json(await listPendingActions(env));
+}
+
+async function handlePendingDecide(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "Invalid JSON body" }, { status: 400 }); }
+  const { id, decision } = body || {};
+  if (decision !== "approve" && decision !== "deny") {
+    return json({ error: 'decision must be "approve" or "deny"' }, { status: 400 });
+  }
+  try {
+    const record = await resolvePendingAction(env, id, decision);
+    return json({ ok: true, record });
+  } catch (err) {
+    return json({ error: err.message }, { status: err.status || 400 });
+  }
+}
+
 // ---- Router -----------------------------------------------------------
 
 export default {
   async fetch(request, env) {
+    const notAuthenticated = await checkAccessJwt(request, env, new URL(request.url).pathname);
+    if (notAuthenticated) return notAuthenticated;
+
     const { pathname } = new URL(request.url);
     const { method } = request;
-
-    const notAuthenticated = await checkAccessJwt(request, env, pathname);
-    if (notAuthenticated) return notAuthenticated;
 
     if (pathname === "/api/status" && method === "GET") {
       return json(await getStatusOrDefault(env));
