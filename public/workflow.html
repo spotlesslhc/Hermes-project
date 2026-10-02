@@ -211,7 +211,7 @@
         { id:'a1', app:'hospitable', col:0, row:0, text:'Guest books; Hospitable sends a webhook.' },
         { id:'a2', app:'zapier', col:1, row:0, text:'Splits by property, creates the calendar event; cancellations delete it.' },
         { id:'a3', app:'google_calendar', col:2, row:0, text:'Turnover event on the Cleans calendar, checkout day.' },
-        { id:'a4', app:'worker', col:3, row:0, text:'Daily check: next cleaner in the cascade; pushes busy days back.' },
+        { id:'a4', app:'worker', name:'Scheduler Agent', col:3, row:0, text:'Daily check: next cleaner in the cascade; pushes busy days back.' },
         { id:'a5', app:'google_calendar', col:4, row:0, text:'Invites the cleaner to the event.' },
         { id:'a6', app:'cleaner', col:5, row:0, text:'Accepts or declines; a decline moves to the next cleaner.' },
         { id:'a7', app:'telegram', col:4, row:1, text:'Alerts you if nobody can take it, or an invite sits 48h.' },
@@ -224,7 +224,7 @@
       steps:[
         { id:'s1', app:'gmail', col:0, row:0, text:'Hospitable email arrives and is auto-forwarded.' },
         { id:'s2', app:'zapier', col:1, row:0, text:'Email parser posts the text to Deja.' },
-        { id:'s3', app:'worker', col:2, row:0, text:'Reads the dates, picks Amy or Ashley, applies the postpone rule.' },
+        { id:'s3', app:'worker', name:'Scheduler Agent', col:2, row:0, text:'Reads the dates, picks Amy or Ashley, applies the postpone rule.' },
         { id:'s4', app:'google_calendar', col:3, row:0, text:'Creates the clean and invites the cleaner.' },
         { id:'s5', app:'wave', col:4, row:0, text:'Draft invoice for the cleaning date.' }
       ],
@@ -235,7 +235,7 @@
       steps:[
         { id:'i1', app:'zapier', col:0, row:0, text:'Booking becomes a draft invoice dated the cleaning day.' },
         { id:'i2', app:'wave', col:1, row:0, text:'Draft waits in Wave.' },
-        { id:'i3', app:'worker', col:2, row:0, text:'4pm audit: right date, rate and discount; fixes moved or cancelled cleans.' },
+        { id:'i3', app:'worker', name:'Bookkeeper Agent', col:2, row:0, text:'4pm audit: right date, rate and discount; fixes moved or cancelled cleans.' },
         { id:'i4', app:'wave', col:3, row:0, text:'Sends the invoice. Problems are held for you.' },
         { id:'i5', app:'google_calendar', col:2, row:1, text:'What actually happened that day.' }
       ],
@@ -245,7 +245,7 @@
       role:'A Zelle deposit text becomes a card for you to approve. Nothing is marked paid without your click.',
       steps:[
         { id:'p1', app:'zelle', col:0, row:0, text:'Deposit text alert, forwarded from your phone.' },
-        { id:'p2', app:'worker', col:1, row:0, text:'Reads the amount and sender; unsure goes to a human.' },
+        { id:'p2', app:'worker', name:'Bookkeeper Agent', col:1, row:0, text:'Reads the amount and sender; unsure goes to a human.' },
         { id:'p3', app:'wave', col:2, row:0, text:'Finds the one open invoice that matches.' },
         { id:'p4', app:'approval', col:3, row:0, text:'Approval card on the dashboard, plus a Telegram ping.' },
         { id:'p5', app:'wave', col:4, row:0, text:'Invoice marked paid after you approve.' }
@@ -256,7 +256,7 @@
       role:'Every Monday Deja totals what each 1099 cleaner is owed. You send the money yourself; Deja never does.',
       steps:[
         { id:'r1', app:'google_calendar', col:0, row:0, text:'Completed cleans, each with its "Pay is $X" line.' },
-        { id:'r2', app:'worker', col:1, row:0, text:'Monday: totals what each cleaner is owed.' },
+        { id:'r2', app:'worker', name:'Bookkeeper Agent', col:1, row:0, text:'Monday: totals what each cleaner is owed.' },
         { id:'r3', app:'telegram', col:2, row:0, text:'Pings you the amount and a street-only note.' },
         { id:'r4', app:'venmo', col:3, row:0, text:'You send it. Claude only prefills; never clicks Send.' },
         { id:'r5', app:'wave', col:4, row:0, text:'Payment recorded and logged as a payroll expense.' }
@@ -267,7 +267,7 @@
       role:'Watches the automations behind the reservation pipeline and surfaces a real failure instead of letting it go quiet.',
       steps:[
         { id:'z1', app:'zapier', col:0, row:0, text:'A Zap runs; a code step reports any failure.' },
-        { id:'z2', app:'worker', col:1, row:0, text:'Receives the report (secret-protected).' },
+        { id:'z2', app:'worker', name:'Zapier Overseer Agent', col:1, row:0, text:'Receives the report (secret-protected).' },
         { id:'z3', app:'dashboard', col:2, row:0, text:'Updates the Zapier card and the Activity log.' }
       ],
       edges:[['z1','z2'],['z2','z3']] },
@@ -276,7 +276,7 @@
       role:'Nothing goes live without you. Edits arrive as a pull request or a queued task, and you merge.',
       steps:[
         { id:'e1', app:'bryce', col:0, row:0, text:'You ask Deja for a change.' },
-        { id:'e2', app:'claude', col:1, row:0, text:'Drafts the exact edits, or queues the task for Claude Code.' },
+        { id:'e2', app:'claude', name:'Site Editor Agent (Claude)', col:1, row:0, text:'Drafts the exact edits, or queues the task for Claude Code.' },
         { id:'e3', app:'github', col:2, row:0, text:'Opens a branch and pull request. Never pushes to main.' },
         { id:'e4', app:'approval', col:3, row:0, text:'You review and merge.' },
         { id:'e5', app:'cloudflare', col:4, row:0, text:'Redeploys automatically within about a minute.' },
@@ -288,7 +288,7 @@
       role:'Organic tracking only for now: a weekly follower snapshot, plus Google Business Profile lookups and edits on request.',
       steps:[
         { id:'m1', app:'meta', col:0, row:0, text:'Follower and post counts via the Graph API.' },
-        { id:'m2', app:'worker', col:1, row:0, text:'Monday 8:30am: builds the weekly snapshot.' },
+        { id:'m2', app:'worker', name:'Marketing Agent', col:1, row:0, text:'Monday 8:30am: builds the weekly snapshot.' },
         { id:'m3', app:'telegram', col:2, row:0, text:'Sends you the digest.' },
         { id:'m4', app:'bryce', col:0, row:1, text:'You ask about your Google profile.' },
         { id:'m5', app:'google_business', col:1, row:1, text:'Deja looks it up; edits need your approval first.' }
@@ -299,7 +299,7 @@
       role:'Type, talk, or say "Hey Deja". Claude understands the request and picks the right tool; the reply can be spoken back.',
       steps:[
         { id:'d1', app:'bryce', col:0, row:0, text:'Type, tap the mic, or say "Hey Deja".' },
-        { id:'d2', app:'claude', col:1, row:0, text:'Understands the request and chooses tools. Risky ones wait for approval.' },
+        { id:'d2', app:'claude', name:'Deja (Claude)', col:1, row:0, text:'Understands the request and chooses tools. Risky ones wait for approval.' },
         { id:'d3', app:'elevenlabs', col:2, row:0, text:'Speaks the reply (falls back to the browser voice).' },
         { id:'d4', app:'gmail', col:2, row:1, text:'Searches and reads email when asked.' },
         { id:'d5', app:'browserbase', col:3, row:1, text:'Opens a named web page.' },
@@ -354,7 +354,7 @@
         n.style.gridRow = step.row + 1;
         n.innerHTML =
           '<div class="node-top"><span class="badge" style="background:hsl(' + app.hue + ',55%,68%)">' + esc(app.ab) + '</span>' +
-          '<span class="node-app">' + esc(app.name) + '</span></div>' +
+          '<span class="node-app">' + esc(step.name || app.name) + '</span></div>' +
           '<div class="node-title">' + esc(step.text) + '</div>' +
           '<div class="node-state"><span class="dot"></span><span class="lbl">Idle</span><span class="when"></span></div>';
         canvas.appendChild(n);
