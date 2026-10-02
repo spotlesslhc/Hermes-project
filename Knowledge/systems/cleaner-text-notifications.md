@@ -195,6 +195,16 @@ never sees a password.
   dropdown, which opens the thread, and only proceed if the thread header
   shows the number. Fallbacks, in order: the cleaner's row in the left list,
   then the new-message flow. Screenshot step `search`.
+- **Search results fix (2026-10-02, second dry run):** the dry run stopped
+  with "couldn't find the new-message button" and a controls list showing
+  search results with "Message 909 264 0249" / "Call 909 264 0249" options,
+  because the search stayed active (the dropdown click didn't match, then the
+  fallbacks ran against the results page). `pickSuggestion` now prefers the
+  **"Message <number>"** option, then the contact row (by name), then any row
+  with the number, only below/left of the search box, and **never a "Call ..."
+  option** (that would dial). If the search route doesn't open the thread the
+  inbox is reloaded (`reset`) before the fallbacks, so a stale search can't
+  hide the buttons.
 - **Replies** land in Bryce's Google Voice, not in Hermes; he reads and
   answers them himself.
 - **Untested against live Google Voice when it shipped.** The page selectors
