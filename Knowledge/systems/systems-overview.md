@@ -49,6 +49,7 @@ The dashboard shows:
   in chat). Shows preview numbers until at least one real month is entered.
   See [[wave-integration]] for why it's manual entry rather than automated
   from Wave.
+- A **Workflow** tab (`/workflow`): every agent's flow drawn step by step with the apps it uses, glowing live while an agent is working — see [[workflow-tab]].
 - An activity log of recent events.
 - The "Talk to Deja" chat box — as of 2026-09-21 it's the first thing under
   the orb, not the last section on the page. Bryce can type, tap the mic,

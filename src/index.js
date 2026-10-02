@@ -3374,6 +3374,108 @@ async function getLog(env, limit = 30) {
   return log.slice(-limit).reverse();
 }
 
+// ---- Live app activity (powers the dashboard's Workflow tab) -------------
+//
+// One KV key holds {"<agent>:<app>": {agent, app, state, detail, at}} for
+// whichever step an agent is in right now. withActivity() marks the apps
+// "running" while the work executes, then "idle" when it finishes or "error"
+// if it throws. The Workflow tab glows the matching node. Best-effort only:
+// a failed write here must never break the real work, so everything is
+// swallowed. A "running" entry older than ACTIVITY_RUNNING_STALE_MS is
+// treated as idle (the Worker was likely cut off mid-run), and an error
+// fades after ACTIVITY_ERROR_TTL_MS.
+const APP_ACTIVITY_KEY = "app_activity";
+const ACTIVITY_RUNNING_STALE_MS = 5 * 60 * 1000;
+const ACTIVITY_ERROR_TTL_MS = 24 * 3600 * 1000;
+
+async function setAppActivity(env, entries) {
+  try {
+    const raw = await env.HERMES_KV.get(APP_ACTIVITY_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    const at = new Date().toISOString();
+    for (const { agent, app, state, detail } of entries) {
+      map[`${agent}:${app}`] = { agent, app, state, detail: (detail || "").slice(0, 140), at };
+    }
+    const cutoff = Date.now() - ACTIVITY_ERROR_TTL_MS;
+    for (const [k, v] of Object.entries(map)) if (Date.parse(v.at) < cutoff) delete map[k];
+    await env.HERMES_KV.put(APP_ACTIVITY_KEY, JSON.stringify(map));
+  } catch { /* tracking is best-effort */ }
+}
+
+async function withActivity(env, agent, apps, detail, fn) {
+  const list = [].concat(apps);
+  await setAppActivity(env, list.map((app) => ({ agent, app, state: "running", detail })));
+  try {
+    const result = await fn();
+    const failed = result instanceof Response && result.status >= 500;
+    await setAppActivity(env, list.map((app) => ({ agent, app, state: failed ? "error" : "idle", detail: failed ? `${detail} -- failed (${result.status})` : detail })));
+    return result;
+  } catch (err) {
+    await setAppActivity(env, list.map((app) => ({ agent, app, state: "error", detail: `${detail} -- ${err.message}` })));
+    throw err;
+  }
+}
+
+async function getFlowState(env) {
+  const [raw, status, pending] = await Promise.all([
+    env.HERMES_KV.get(APP_ACTIVITY_KEY),
+    getStatusOrDefault(env),
+    listPendingActions(env)
+  ]);
+  const now = Date.now();
+  const activity = Object.values(raw ? JSON.parse(raw) : {}).map((a) => {
+    const age = now - Date.parse(a.at);
+    if (a.state === "running" && age > ACTIVITY_RUNNING_STALE_MS) return { ...a, state: "idle" };
+    if (a.state === "error" && age > ACTIVITY_ERROR_TTL_MS) return { ...a, state: "idle" };
+    return a;
+  });
+  return {
+    now: new Date(now).toISOString(),
+    activity,
+    pendingApprovals: pending.length,
+    zapierErrors: status.zapier_overseer?.errors || 0,
+    zapierStatus: status.zapier_overseer?.status || "idle",
+    agents: status
+  };
+}
+
+// Which agent + apps a chat tool touches, for the Workflow tab. Tools not
+// listed here (vault notes, memory) just aren't shown.
+const TOOL_ACTIVITY = {
+  propose_site_edit: ["site_editor", ["claude", "github"]],
+  queue_edit_request: ["site_editor", ["github"]],
+  fetch_site: ["site_editor", ["website"]],
+  assign_cleaner: ["scheduler", ["google_calendar"]],
+  list_upcoming_cleanings: ["scheduler", ["google_calendar"]],
+  reschedule_clean: ["scheduler", ["google_calendar"]],
+  cancel_clean: ["scheduler", ["google_calendar"]],
+  cancel_turno_clean: ["scheduler", ["google_calendar"]],
+  resend_cleaner_invites: ["scheduler", ["google_calendar"]],
+  create_clean_event: ["scheduler", ["google_calendar"]],
+  get_clean_invite_links: ["scheduler", ["google_calendar"]],
+  text_cleaner: ["scheduler", ["google_voice"]],
+  text_cleaner_schedule: ["scheduler", ["google_voice"]],
+  check_text_status: ["scheduler", ["google_voice"]],
+  check_google_voice: ["scheduler", ["google_voice"]],
+  test_voice_compose: ["scheduler", ["google_voice"]],
+  create_wave_invoice: ["bookkeeper", ["wave"]],
+  set_invoice_discount: ["bookkeeper", ["wave"]],
+  audit_draft_invoices: ["bookkeeper", ["wave"]],
+  send_wave_invoices: ["bookkeeper", ["wave"]],
+  record_invoice_payment: ["bookkeeper", ["wave"]],
+  correct_invoice_payment: ["bookkeeper", ["wave"]],
+  check_invoice_payment: ["bookkeeper", ["wave"]],
+  list_wave_invoices: ["bookkeeper", ["wave"]],
+  get_cleaner_payroll: ["bookkeeper", ["google_calendar"]],
+  record_cleaner_payment: ["bookkeeper", ["wave"]],
+  browse_google_business: ["marketing", ["google_business"]],
+  edit_google_business: ["marketing", ["google_business"]],
+  search_gmail: ["deja", ["gmail"]],
+  read_email: ["deja", ["gmail"]],
+  browse_web: ["deja", ["browserbase"]],
+  control_spotify: ["deja", ["spotify"]]
+};
+
 // ---- Deja's own memory: small, curated, cheap to inject ------------------
 //
 // Not a transcript store — /api/ask is stateless per request (the dashboard
@@ -3968,6 +4070,12 @@ async function readVaultNote(env, path) {
 // action, so the two paths can never drift apart.
 
 async function dispatchTool(env, name, input) {
+  const tracked = TOOL_ACTIVITY[name];
+  if (!tracked) return dispatchToolInner(env, name, input);
+  return withActivity(env, tracked[0], tracked[1], `Deja ran ${name}`, () => dispatchToolInner(env, name, input));
+}
+
+async function dispatchToolInner(env, name, input) {
   if (name === "propose_site_edit") {
     const prUrl = await proposeSiteEdit(env, input);
     await setStatus(env, { site_editor: { status: "attn", label: "Needs review", lastPublish: new Date().toISOString() } });
@@ -5340,6 +5448,9 @@ export default {
     if (pathname === "/api/status" && method === "GET") {
       return json(await getStatusOrDefault(env));
     }
+    if (pathname === "/api/flow" && method === "GET") {
+      return json(await getFlowState(env));
+    }
     if (pathname === "/api/log" && method === "GET") {
       return json(await getLog(env, 30));
     }
@@ -5350,10 +5461,10 @@ export default {
       return handleFinanceEntry(request, env);
     }
     if (pathname === "/api/ask" && method === "POST") {
-      return handleAsk(request, env);
+      return withActivity(env, "deja", "claude", "Answering Bryce in chat", () => handleAsk(request, env));
     }
     if (pathname === "/api/speak" && method === "POST") {
-      return handleSpeak(request, env);
+      return withActivity(env, "deja", "elevenlabs", "Speaking a reply", () => handleSpeak(request, env));
     }
     if (pathname === "/api/speak/status" && method === "GET") {
       return handleSpeakStatus(env);
@@ -5365,7 +5476,7 @@ export default {
       return handlePendingDecide(request, env);
     }
     if (pathname === "/webhooks/reservation" && method === "POST") {
-      return handleReservation(request, env);
+      return withActivity(env, "scheduler", "zapier", "New booking from Zapier", () => handleReservation(request, env));
     }
     if (pathname === "/api/spotify/login" && method === "GET") {
       return handleSpotifyLogin(env);
@@ -5399,16 +5510,16 @@ export default {
       return handleGoogleCalendarCallback(request, env);
     }
     if (pathname === "/webhooks/turno-reservation" && method === "POST") {
-      return handleTurnoReservationWebhook(request, env);
+      return withActivity(env, "scheduler", ["zapier", "google_calendar"], "Sahara booking email", () => handleTurnoReservationWebhook(request, env));
     }
     if (pathname === "/webhooks/zapier-status" && method === "POST") {
-      return handleZapierStatusWebhook(request, env);
+      return withActivity(env, "zapier_overseer", "zapier", "Zap status report", () => handleZapierStatusWebhook(request, env));
     }
     if (pathname === "/webhooks/bank-alert" && method === "POST") {
-      return handleBankAlertWebhook(request, env);
+      return withActivity(env, "bookkeeper", ["zelle", "wave"], "Bank text alert", () => handleBankAlertWebhook(request, env));
     }
     if (pathname === "/webhooks/telegram" && method === "POST") {
-      return handleTelegramWebhook(request, env);
+      return withActivity(env, "deja", "telegram", "Telegram reply", () => handleTelegramWebhook(request, env));
     }
     if (pathname === "/api/sms-batch" && method === "GET") {
       return json((await getCurrentTelegramApproval(env)) || { status: "none" });
@@ -5473,17 +5584,17 @@ export default {
 
   async scheduled(event, env, ctx) {
     if (event.cron === "0 15 * * 1") {
-      ctx.waitUntil(runWeeklyPayrollCheck(env));
+      ctx.waitUntil(withActivity(env, "bookkeeper", ["google_calendar", "telegram"], "Weekly payroll check", () => runWeeklyPayrollCheck(env)));
       ctx.waitUntil(resetWeeklyZapierErrorCount(env));
     }
     if (event.cron === "0 15 * * *") {
-      ctx.waitUntil(runDailyCleanTextCheck(env));
+      ctx.waitUntil(withActivity(env, "scheduler", ["google_calendar", "telegram"], "Daily staffing check", () => runDailyCleanTextCheck(env)));
     }
     if (event.cron === "0 23 * * *") {
-      ctx.waitUntil(runInvoiceSendCheck(env));
+      ctx.waitUntil(withActivity(env, "bookkeeper", ["google_calendar", "wave"], "4pm invoice check", () => runInvoiceSendCheck(env)));
     }
     if (event.cron === "30 15 * * 1") {
-      ctx.waitUntil(runWeeklySocialDigest(env));
+      ctx.waitUntil(withActivity(env, "marketing", ["meta", "telegram"], "Weekly social digest", () => runWeeklySocialDigest(env)));
     }
   }
 };

@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workflow — Deja</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper:#0E1518;
+    --paper-raised:#161F23;
+    --ink:#EAEEEC;
+    --ink-soft:#93A3A8;
+    --line:#2A353A;
+    --line-strong:#3B4A50;
+    --teal:#4FA8A4;
+    --teal-deep:#7BC4C0;
+    --amber:#E3B45D;
+    --green:#5CB690;
+    --red:#D97A68;
+  }
+  :root[data-theme="light"]{
+    --paper:#F1F3F0;
+    --paper-raised:#FFFFFF;
+    --ink:#10202A;
+    --ink-soft:#4C6373;
+    --line:#D7DCD6;
+    --line-strong:#B7C0BA;
+    --teal:#2F7A78;
+    --teal-deep:#1F5654;
+    --amber:#D9A441;
+    --green:#3F8F6F;
+    --red:#B24B3B;
+  }
+
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:var(--paper); color:var(--ink); font-family:'Work Sans', system-ui, sans-serif; -webkit-font-smoothing:antialiased;}
+  body{min-height:100vh; padding:28px 20px 80px;}
+  .wrap{max-width:1180px; margin:0 auto;}
+
+  .head{
+    display:flex; align-items:flex-end; justify-content:space-between;
+    gap:16px; flex-wrap:wrap;
+    border-bottom:2px solid var(--ink);
+    padding-bottom:16px; margin-bottom:0;
+  }
+  .brand{display:flex; align-items:baseline; gap:14px;}
+  .brand h1{font-family:'Barlow Condensed', sans-serif; font-weight:700; font-size:clamp(34px,6vw,52px); letter-spacing:.5px; line-height:.9;}
+  .brand .tag{font-size:13px; color:var(--ink-soft);}
+  .theme-btn{
+    background:var(--paper-raised); color:var(--ink); border:1px solid var(--line);
+    width:34px; height:34px; border-radius:3px; cursor:pointer; display:grid; place-items:center;
+  }
+  .theme-btn:hover{border-color:var(--line-strong);}
+
+  .tabs{display:flex; gap:4px; margin:0 0 26px; border-bottom:1px solid var(--line);}
+  .tabs a{
+    font-family:'Barlow Condensed', sans-serif; font-weight:600; font-size:18px; letter-spacing:.4px;
+    color:var(--ink-soft); text-decoration:none; padding:10px 18px 9px; border-bottom:3px solid transparent; margin-bottom:-1px;
+  }
+  .tabs a:hover{color:var(--ink);}
+  .tabs a[aria-current="page"]{color:var(--ink); border-bottom-color:var(--teal);}
+
+  .intro{display:flex; flex-wrap:wrap; gap:14px 28px; align-items:center; justify-content:space-between; margin-bottom:26px;}
+  .intro p{font-size:14px; color:var(--ink-soft); max-width:560px; line-height:1.5;}
+  .legend{display:flex; flex-wrap:wrap; gap:8px;}
+  .chip{
+    display:inline-flex; align-items:center; gap:7px; font-size:12.5px; font-weight:500;
+    background:var(--paper-raised); border:1px solid var(--line); border-radius:3px; padding:6px 10px;
+  }
+  .chip b{font-weight:600;}
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--ink-soft); flex:none;}
+  .dot.running{background:var(--green);} .dot.waiting{background:var(--amber);} .dot.error{background:var(--red);}
+
+  .banner{
+    display:none; margin-bottom:18px; padding:10px 14px; border:1px solid var(--amber);
+    border-radius:3px; font-size:13px; color:var(--amber); background:var(--paper-raised);
+  }
+  .banner.show{display:block;}
+
+  /* ---- Lanes ---- */
+  .lane{
+    background:var(--paper-raised); border:1px solid var(--line); border-radius:6px;
+    margin-bottom:22px; overflow:hidden;
+  }
+  .lane-head{
+    display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;
+    padding:16px 20px 14px; border-bottom:1px solid var(--line);
+  }
+  .lane-agent{font-size:11px; font-weight:600; letter-spacing:1.2px; text-transform:uppercase; color:var(--teal-deep); margin-bottom:3px;}
+  .lane-title{font-family:'Barlow Condensed', sans-serif; font-weight:600; font-size:24px; letter-spacing:.3px; line-height:1.1;}
+  .lane-role{font-size:13px; color:var(--ink-soft); margin-top:4px; max-width:680px; line-height:1.45;}
+  .lane-pill{
+    display:inline-flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600;
+    border:1px solid var(--line-strong); border-radius:3px; padding:6px 11px; white-space:nowrap;
+  }
+  .lane-pill.running{border-color:var(--green); color:var(--green);}
+  .lane-pill.waiting{border-color:var(--amber); color:var(--amber);}
+  .lane-pill.error{border-color:var(--red); color:var(--red);}
+
+  .lane-scroll{overflow-x:auto; padding:26px 24px 28px;}
+  .canvas{position:relative; display:grid; width:max-content; column-gap:36px; row-gap:34px;}
+  .canvas svg{position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible;}
+  .edge{fill:none; stroke:var(--line-strong); stroke-width:1.6;}
+  .edge.live{stroke:var(--green); stroke-dasharray:6 6; animation:flow .9s linear infinite;}
+  .arrowhead{fill:var(--line-strong);} .arrowhead.live{fill:var(--green);}
+  @keyframes flow{to{stroke-dashoffset:-12;}}
+
+  /* ---- Nodes ---- */
+  .node{
+    position:relative; z-index:1; width:148px; background:var(--paper); border:1px solid var(--line);
+    border-radius:6px; padding:12px 12px 11px; transition:border-color .25s, box-shadow .25s;
+  }
+  .node-top{display:flex; align-items:center; gap:9px; margin-bottom:8px;}
+  .badge{
+    width:30px; height:30px; border-radius:7px; flex:none; display:grid; place-items:center;
+    font-family:'Barlow Condensed', sans-serif; font-weight:700; font-size:14px; letter-spacing:.4px; color:#0E1518;
+  }
+  .node.human{border-style:dashed;}
+  .node-app{font-size:13px; font-weight:600; line-height:1.2;}
+  .node-title{font-size:12.5px; line-height:1.4; color:var(--ink-soft); min-height:68px;}
+  .node-state{
+    display:flex; align-items:center; gap:6px; margin-top:9px; padding-top:8px; border-top:1px solid var(--line);
+    font-size:11.5px; font-weight:600; letter-spacing:.3px; color:var(--ink-soft);
+  }
+  .node-state .when{font-weight:400; margin-left:auto; text-align:right; max-width:80px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .node.running{border-color:var(--green); box-shadow:0 0 0 1px var(--green), 0 0 22px 2px color-mix(in srgb, var(--green) 55%, transparent); animation:glow-green 1.6s ease-in-out infinite;}
+  .node.waiting{border-color:var(--amber); box-shadow:0 0 0 1px var(--amber), 0 0 20px 1px color-mix(in srgb, var(--amber) 45%, transparent); animation:glow-amber 2.6s ease-in-out infinite;}
+  .node.error{border-color:var(--red); box-shadow:0 0 0 1px var(--red), 0 0 22px 2px color-mix(in srgb, var(--red) 55%, transparent); animation:glow-red 1.2s ease-in-out infinite;}
+  .node.running .node-state{color:var(--green);} .node.waiting .node-state{color:var(--amber);} .node.error .node-state{color:var(--red);}
+  .node.running .dot{background:var(--green);} .node.waiting .dot{background:var(--amber);} .node.error .dot{background:var(--red);}
+  @keyframes glow-green{50%{box-shadow:0 0 0 1px var(--green), 0 0 34px 6px color-mix(in srgb, var(--green) 65%, transparent);}}
+  @keyframes glow-amber{50%{box-shadow:0 0 0 1px var(--amber), 0 0 30px 4px color-mix(in srgb, var(--amber) 55%, transparent);}}
+  @keyframes glow-red{50%{box-shadow:0 0 0 1px var(--red), 0 0 34px 6px color-mix(in srgb, var(--red) 65%, transparent);}}
+  @media (prefers-reduced-motion: reduce){
+    .node.running,.node.waiting,.node.error,.edge.live{animation:none;}
+  }
+
+  .foot{font-size:12.5px; color:var(--ink-soft); margin-top:6px; line-height:1.5;}
+  @media (max-width:640px){ body{padding:20px 12px 60px;} .lane-scroll{padding:20px 14px 22px;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div class="brand">
+      <h1>Deja</h1>
+      <div class="tag">Dispatch &amp; oversight for Spotless Cleaning, Lake Havasu City</div>
+    </div>
+    <button type="button" class="theme-btn" id="themeBtn" title="Switch theme" aria-label="Switch theme">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    </button>
+  </div>
+
+  <nav class="tabs" aria-label="Dashboard sections">
+    <a href="/">Dashboard</a>
+    <a href="/workflow" aria-current="page">Workflow</a>
+  </nav>
+
+  <div class="intro">
+    <p>How every Deja agent works, step by step, and which app each step happens in. When an agent is working, its app lights up here and says what state it's in.</p>
+    <div class="legend" aria-label="Status key">
+      <span class="chip"><span class="dot running"></span><b id="cRunning">0</b> running</span>
+      <span class="chip"><span class="dot waiting"></span><b id="cWaiting">0</b> waiting</span>
+      <span class="chip"><span class="dot error"></span><b id="cError">0</b> error</span>
+    </div>
+  </div>
+
+  <div class="banner" id="banner" role="status"></div>
+  <div id="lanes"></div>
+  <p class="foot">Dashed boxes are people (you or a cleaner), not software. <b>Running</b> = an agent is in that app right now. <b>Waiting</b> = it needs you (approval or a reply). <b>Error</b> = the last attempt failed; it clears after the next success or 24 hours. Updates every few seconds.</p>
+</div>
+
+<script>
+(function(){
+  /* ---------- Apps (badge colors are just identifiers, not brand logos) ---------- */
+  const APPS = {
+    hospitable:      { name:'Hospitable',      ab:'Ho', hue:12 },
+    zapier:          { name:'Zapier',          ab:'Zp', hue:22 },
+    google_calendar: { name:'Google Calendar', ab:'Ca', hue:215 },
+    gmail:           { name:'Gmail',           ab:'Gm', hue:4 },
+    worker:          { name:'Deja (Worker)',   ab:'De', hue:175 },
+    telegram:        { name:'Telegram',        ab:'Tg', hue:200 },
+    google_voice:    { name:'Google Voice',    ab:'GV', hue:140 },
+    wave:            { name:'Wave',            ab:'Wv', hue:230 },
+    zelle:           { name:'Zelle (Foothills)', ab:'Ze', hue:270 },
+    venmo:           { name:'Venmo / Zelle',   ab:'Vm', hue:205 },
+    approval:        { name:'Your approval',   ab:'OK', hue:45, human:true },
+    bryce:           { name:'Bryce',           ab:'You', hue:45, human:true },
+    cleaner:         { name:'Cleaner',         ab:'Cl', hue:45, human:true },
+    dashboard:       { name:'Dashboard',       ab:'Da', hue:175 },
+    claude:          { name:'Claude (AI)',     ab:'Cl', hue:28 },
+    github:          { name:'GitHub',          ab:'Gh', hue:260 },
+    cloudflare:      { name:'Cloudflare',      ab:'Cf', hue:25 },
+    website:         { name:'spotlesslhc.com', ab:'Web', hue:160 },
+    meta:            { name:'Facebook / Instagram', ab:'Mt', hue:220 },
+    google_business: { name:'Google Business Profile', ab:'GB', hue:100 },
+    browserbase:     { name:'Web browsing',    ab:'Br', hue:300 },
+    elevenlabs:      { name:'ElevenLabs voice', ab:'EL', hue:330 },
+    spotify:         { name:'Spotify',         ab:'Sp', hue:145 }
+  };
+
+  /* ---------- The workflow: lanes of steps. col/row place a step on the grid;
+     edges are [fromId, toId]. A step glows when its lane's agent is in that app. ---------- */
+  const LANES = [
+    { id:'scheduler', agent:'scheduler', name:'Booking to cleaner', who:'Scheduler',
+      role:'A guest books, a clean lands on the Cleans calendar, and Deja works down the cleaner list (Amy, then Ashley) until someone accepts.',
+      steps:[
+        { id:'a1', app:'hospitable', col:0, row:0, text:'Guest books; Hospitable sends a webhook.' },
+        { id:'a2', app:'zapier', col:1, row:0, text:'Splits by property, creates the calendar event; cancellations delete it.' },
+        { id:'a3', app:'google_calendar', col:2, row:0, text:'Turnover event on the Cleans calendar, checkout day.' },
+        { id:'a4', app:'worker', col:3, row:0, text:'Daily check: next cleaner in the cascade; pushes busy days back.' },
+        { id:'a5', app:'google_calendar', col:4, row:0, text:'Invites the cleaner to the event.' },
+        { id:'a6', app:'cleaner', col:5, row:0, text:'Accepts or declines; a decline moves to the next cleaner.' },
+        { id:'a7', app:'telegram', col:4, row:1, text:'Alerts you if nobody can take it, or an invite sits 48h.' },
+        { id:'a8', app:'google_voice', col:5, row:1, text:'Texts a cleaner when you ask Deja to.' }
+      ],
+      edges:[['a1','a2'],['a2','a3'],['a3','a4'],['a4','a5'],['a5','a6'],['a4','a7'],['a7','a8']] },
+
+    { id:'sahara', agent:'scheduler', name:'Sahara (Turno) bookings', who:'Scheduler',
+      role:'Sahara Drive bookings reach you only as an email, so a forwarded email stands in for the Hospitable webhook.',
+      steps:[
+        { id:'s1', app:'gmail', col:0, row:0, text:'Hospitable email arrives and is auto-forwarded.' },
+        { id:'s2', app:'zapier', col:1, row:0, text:'Email parser posts the text to Deja.' },
+        { id:'s3', app:'worker', col:2, row:0, text:'Reads the dates, picks Amy or Ashley, applies the postpone rule.' },
+        { id:'s4', app:'google_calendar', col:3, row:0, text:'Creates the clean and invites the cleaner.' },
+        { id:'s5', app:'wave', col:4, row:0, text:'Draft invoice for the cleaning date.' }
+      ],
+      edges:[['s1','s2'],['s2','s3'],['s3','s4'],['s4','s5']] },
+
+    { id:'invoices', agent:'bookkeeper', name:'Invoicing', who:'Bookkeeper',
+      role:'Every invoice starts as a draft. At 4pm Arizona each day Deja checks every draft against the calendar and sends it only once the clean has happened.',
+      steps:[
+        { id:'i1', app:'zapier', col:0, row:0, text:'Booking becomes a draft invoice dated the cleaning day.' },
+        { id:'i2', app:'wave', col:1, row:0, text:'Draft waits in Wave.' },
+        { id:'i3', app:'worker', col:2, row:0, text:'4pm audit: right date, rate and discount; fixes moved or cancelled cleans.' },
+        { id:'i4', app:'wave', col:3, row:0, text:'Sends the invoice. Problems are held for you.' },
+        { id:'i5', app:'google_calendar', col:2, row:1, text:'What actually happened that day.' }
+      ],
+      edges:[['i1','i2'],['i2','i3'],['i3','i4'],['i5','i3']] },
+
+    { id:'payments', agent:'bookkeeper', name:'Payments in', who:'Bookkeeper',
+      role:'A Zelle deposit text becomes a card for you to approve. Nothing is marked paid without your click.',
+      steps:[
+        { id:'p1', app:'zelle', col:0, row:0, text:'Deposit text alert, forwarded from your phone.' },
+        { id:'p2', app:'worker', col:1, row:0, text:'Reads the amount and sender; unsure goes to a human.' },
+        { id:'p3', app:'wave', col:2, row:0, text:'Finds the one open invoice that matches.' },
+        { id:'p4', app:'approval', col:3, row:0, text:'Approval card on the dashboard, plus a Telegram ping.' },
+        { id:'p5', app:'wave', col:4, row:0, text:'Invoice marked paid after you approve.' }
+      ],
+      edges:[['p1','p2'],['p2','p3'],['p3','p4'],['p4','p5']] },
+
+    { id:'payroll', agent:'bookkeeper', name:'Cleaner payroll', who:'Bookkeeper',
+      role:'Every Monday Deja totals what each 1099 cleaner is owed. You send the money yourself; Deja never does.',
+      steps:[
+        { id:'r1', app:'google_calendar', col:0, row:0, text:'Completed cleans, each with its "Pay is $X" line.' },
+        { id:'r2', app:'worker', col:1, row:0, text:'Monday: totals what each cleaner is owed.' },
+        { id:'r3', app:'telegram', col:2, row:0, text:'Pings you the amount and a street-only note.' },
+        { id:'r4', app:'venmo', col:3, row:0, text:'You send it. Claude only prefills; never clicks Send.' },
+        { id:'r5', app:'wave', col:4, row:0, text:'Payment recorded and logged as a payroll expense.' }
+      ],
+      edges:[['r1','r2'],['r2','r3'],['r3','r4'],['r4','r5']] },
+
+    { id:'overseer', agent:'zapier_overseer', name:'Zap health', who:'Zapier Overseer',
+      role:'Watches the automations behind the reservation pipeline and surfaces a real failure instead of letting it go quiet.',
+      steps:[
+        { id:'z1', app:'zapier', col:0, row:0, text:'A Zap runs; a code step reports any failure.' },
+        { id:'z2', app:'worker', col:1, row:0, text:'Receives the report (secret-protected).' },
+        { id:'z3', app:'dashboard', col:2, row:0, text:'Updates the Zapier card and the Activity log.' }
+      ],
+      edges:[['z1','z2'],['z2','z3']] },
+
+    { id:'site', agent:'site_editor', name:'Website & dashboard edits', who:'Site Editor',
+      role:'Nothing goes live without you. Edits arrive as a pull request or a queued task, and you merge.',
+      steps:[
+        { id:'e1', app:'bryce', col:0, row:0, text:'You ask Deja for a change.' },
+        { id:'e2', app:'claude', col:1, row:0, text:'Drafts the exact edits, or queues the task for Claude Code.' },
+        { id:'e3', app:'github', col:2, row:0, text:'Opens a branch and pull request. Never pushes to main.' },
+        { id:'e4', app:'approval', col:3, row:0, text:'You review and merge.' },
+        { id:'e5', app:'cloudflare', col:4, row:0, text:'Redeploys automatically within about a minute.' },
+        { id:'e6', app:'website', col:5, row:0, text:'Live on spotlesslhc.com or the dashboard.' }
+      ],
+      edges:[['e1','e2'],['e2','e3'],['e3','e4'],['e4','e5'],['e5','e6']] },
+
+    { id:'marketing', agent:'marketing', name:'Social & Google profile', who:'Marketing',
+      role:'Organic tracking only for now: a weekly follower snapshot, plus Google Business Profile lookups and edits on request.',
+      steps:[
+        { id:'m1', app:'meta', col:0, row:0, text:'Follower and post counts via the Graph API.' },
+        { id:'m2', app:'worker', col:1, row:0, text:'Monday 8:30am: builds the weekly snapshot.' },
+        { id:'m3', app:'telegram', col:2, row:0, text:'Sends you the digest.' },
+        { id:'m4', app:'bryce', col:0, row:1, text:'You ask about your Google profile.' },
+        { id:'m5', app:'google_business', col:1, row:1, text:'Deja looks it up; edits need your approval first.' }
+      ],
+      edges:[['m1','m2'],['m2','m3'],['m4','m5']] },
+
+    { id:'deja', agent:'deja', name:'Talking to Deja', who:'Deja',
+      role:'Type, talk, or say "Hey Deja". Claude understands the request and picks the right tool; the reply can be spoken back.',
+      steps:[
+        { id:'d1', app:'bryce', col:0, row:0, text:'Type, tap the mic, or say "Hey Deja".' },
+        { id:'d2', app:'claude', col:1, row:0, text:'Understands the request and chooses tools. Risky ones wait for approval.' },
+        { id:'d3', app:'elevenlabs', col:2, row:0, text:'Speaks the reply (falls back to the browser voice).' },
+        { id:'d4', app:'gmail', col:2, row:1, text:'Searches and reads email when asked.' },
+        { id:'d5', app:'browserbase', col:3, row:1, text:'Opens a named web page.' },
+        { id:'d6', app:'spotify', col:4, row:1, text:'Plays or pauses music.' },
+        { id:'d7', app:'telegram', col:0, row:1, text:'Your yes/no replies from your phone.' }
+      ],
+      edges:[['d1','d2'],['d2','d3'],['d2','d4'],['d4','d5'],['d5','d6'],['d7','d2']] }
+  ];
+
+  const LABEL = { running:'Running', waiting:'Waiting', error:'Error', idle:'Idle' };
+  const RANK = { error:3, running:2, waiting:1, idle:0 };
+  const $ = (id) => document.getElementById(id);
+  const nodeEls = {};
+  let flow = null;
+
+  function ago(iso){
+    if(!iso) return '';
+    const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+    if(s < 60) return 'just now';
+    if(s < 3600) return Math.round(s/60) + 'm ago';
+    if(s < 86400) return Math.round(s/3600) + 'h ago';
+    return Math.round(s/86400) + 'd ago';
+  }
+  const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  /* ---------- Build ---------- */
+  function build(){
+    const host = $('lanes');
+    host.innerHTML = '';
+    LANES.forEach(lane => {
+      const cols = Math.max(...lane.steps.map(s => s.col)) + 1;
+      const el = document.createElement('section');
+      el.className = 'lane';
+      el.id = 'lane-' + lane.id;
+      el.innerHTML =
+        '<div class="lane-head"><div><div class="lane-agent">' + esc(lane.who) + ' agent</div>' +
+        '<h2 class="lane-title">' + esc(lane.name) + '</h2><p class="lane-role">' + esc(lane.role) + '</p></div>' +
+        '<span class="lane-pill" data-pill="' + lane.id + '"><span class="dot"></span><span class="t">Idle</span></span></div>' +
+        '<div class="lane-scroll"><div class="canvas" style="grid-template-columns:repeat(' + cols + ',148px)"></div></div>';
+      const canvas = el.querySelector('.canvas');
+      const svgNS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNS, 'svg');
+      svg.setAttribute('aria-hidden', 'true');
+      svg.innerHTML = '<defs><marker id="ah-' + lane.id + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0 0L10 5L0 10z"/></marker>' +
+        '<marker id="ahl-' + lane.id + '" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead live" d="M0 0L10 5L0 10z"/></marker></defs>';
+      canvas.appendChild(svg);
+      lane.steps.forEach(step => {
+        const app = APPS[step.app];
+        const n = document.createElement('div');
+        n.className = 'node' + (app.human ? ' human' : '');
+        n.style.gridColumn = step.col + 1;
+        n.style.gridRow = step.row + 1;
+        n.innerHTML =
+          '<div class="node-top"><span class="badge" style="background:hsl(' + app.hue + ',55%,68%)">' + esc(app.ab) + '</span>' +
+          '<span class="node-app">' + esc(app.name) + '</span></div>' +
+          '<div class="node-title">' + esc(step.text) + '</div>' +
+          '<div class="node-state"><span class="dot"></span><span class="lbl">Idle</span><span class="when"></span></div>';
+        canvas.appendChild(n);
+        nodeEls[step.id] = n;
+      });
+      host.appendChild(el);
+    });
+    drawEdges();
+  }
+
+  /* ---------- Arrows: measured from the real node positions ---------- */
+  function drawEdges(){
+    LANES.forEach(lane => {
+      const canvas = document.querySelector('#lane-' + lane.id + ' .canvas');
+      const svg = canvas.querySelector('svg');
+      svg.querySelectorAll('path.edge').forEach(p => p.remove());
+      const base = canvas.getBoundingClientRect();
+      const rect = (id) => {
+        const r = nodeEls[id].getBoundingClientRect();
+        return { l:r.left-base.left, r:r.right-base.left, t:r.top-base.top, b:r.bottom-base.top, cx:(r.left+r.right)/2-base.left, cy:(r.top+r.bottom)/2-base.top };
+      };
+      lane.edges.forEach(([from, to]) => {
+        const a = rect(from), b = rect(to);
+        const sa = lane.steps.find(s => s.id === from), sb = lane.steps.find(s => s.id === to);
+        let d;
+        if(sa.col === sb.col){
+          const down = b.t > a.t;
+          d = 'M' + a.cx + ' ' + (down ? a.b : a.t) + ' L' + b.cx + ' ' + (down ? b.t : b.b);
+        } else if(sa.row === sb.row){
+          const fwd = b.l > a.l;
+          d = 'M' + (fwd ? a.r : a.l) + ' ' + a.cy + ' L' + (fwd ? b.l : b.r) + ' ' + b.cy;
+        } else {
+          const fwd = b.l > a.l;
+          const sx = fwd ? a.r : a.l, ex = fwd ? b.l : b.r;
+          const mx = ex + (fwd ? -24 : 24);
+          d = 'M' + sx + ' ' + a.cy + ' L' + mx + ' ' + a.cy + ' L' + mx + ' ' + b.cy + ' L' + ex + ' ' + b.cy;
+        }
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', d);
+        path.setAttribute('class', 'edge');
+        path.dataset.from = from;
+        path.setAttribute('marker-end', 'url(#ah-' + lane.id + ')');
+        svg.appendChild(path);
+      });
+    });
+    paintEdges();
+  }
+
+  /* ---------- Live state ---------- */
+  function stateFor(lane, step){
+    if(!flow) return { state:'idle' };
+    let best = { state:'idle' };
+    const consider = (s) => { if(RANK[s.state] > RANK[best.state]) best = s; };
+    flow.activity.forEach(a => {
+      if(a.agent === lane.agent && a.app === step.app) consider(a);
+    });
+    if(step.app === 'approval' && flow.pendingApprovals > 0 && (lane.agent === 'bookkeeper' || lane.agent === 'site_editor')){
+      consider({ state:'waiting', detail: flow.pendingApprovals + ' waiting for you' });
+    }
+    if(step.app === 'zapier' && lane.agent === 'zapier_overseer'){
+      if(flow.zapierStatus === 'error') consider({ state:'error', detail:'A Zap reported a failure' });
+      else if(flow.zapierStatus === 'attn') consider({ state:'waiting', detail:'Needs review' });
+    }
+    return best;
+  }
+
+  function paint(){
+    const counts = { running:0, waiting:0, error:0 };
+    LANES.forEach(lane => {
+      let top = 'idle';
+      lane.steps.forEach(step => {
+        const n = nodeEls[step.id];
+        const st = stateFor(lane, step);
+        n.classList.remove('running','waiting','error');
+        if(st.state !== 'idle') n.classList.add(st.state);
+        n.querySelector('.lbl').textContent = LABEL[st.state];
+        n.querySelector('.when').textContent = st.at ? ago(st.at) : '';
+        n.title = st.detail || '';
+        if(RANK[st.state] > RANK[top]) top = st.state;
+        if(st.state !== 'idle') counts[st.state]++;
+      });
+      const pill = document.querySelector('[data-pill="' + lane.id + '"]');
+      pill.className = 'lane-pill' + (top !== 'idle' ? ' ' + top : '');
+      pill.querySelector('.dot').className = 'dot' + (top !== 'idle' ? ' ' + top : '');
+      pill.querySelector('.t').textContent = LABEL[top];
+    });
+    $('cRunning').textContent = counts.running;
+    $('cWaiting').textContent = counts.waiting;
+    $('cError').textContent = counts.error;
+    paintEdges();
+  }
+
+  // An arrow flows while the step it leaves is running.
+  function paintEdges(){
+    document.querySelectorAll('path.edge').forEach(p => {
+      const live = nodeEls[p.dataset.from] && nodeEls[p.dataset.from].classList.contains('running');
+      p.classList.toggle('live', !!live);
+      const laneId = p.closest('.lane').id.slice(5);
+      p.setAttribute('marker-end', 'url(#' + (live ? 'ahl-' : 'ah-') + laneId + ')');
+    });
+  }
+
+  async function load(){
+    try{
+      const res = await fetch('/api/flow', { cache:'no-store' });
+      if(!res.ok) throw new Error(res.status);
+      flow = await res.json();
+      $('banner').classList.remove('show');
+    }catch(e){
+      $('banner').textContent = "Can't reach live status right now. The diagram below is still accurate; the glow will return when the connection does.";
+      $('banner').classList.add('show');
+    }
+    paint();
+  }
+
+  /* ---------- Theme (shares the dashboard's saved choice) ---------- */
+  (function(){
+    const root = document.documentElement;
+    let saved; try{ saved = localStorage.getItem('deja-theme'); }catch(e){}
+    if(saved === 'light') root.setAttribute('data-theme', 'light');
+    $('themeBtn').addEventListener('click', () => {
+      const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+      if(next === 'light') root.setAttribute('data-theme', 'light'); else root.removeAttribute('data-theme');
+      try{ localStorage.setItem('deja-theme', next); }catch(e){}
+    });
+  })();
+
+  build();
+  load();
+  let timer = setInterval(load, 5000);
+  document.addEventListener('visibilitychange', () => {
+    clearInterval(timer);
+    if(!document.hidden){ load(); timer = setInterval(load, 5000); }
+  });
+  let rz; window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(drawEdges, 120); });
+  if(document.fonts && document.fonts.ready) document.fonts.ready.then(drawEdges);
+  window.addEventListener('load', drawEdges);
+})();
+</script>
+</body>
+</html>

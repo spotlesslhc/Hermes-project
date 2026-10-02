@@ -119,6 +119,14 @@
   .theme-btn:hover{color:var(--ink); border-color:var(--line-strong);}
   .clock{font-size:13px; color:var(--ink-soft); text-align:right; line-height:1.4;}
   .clock .day{color:var(--ink); font-weight:500;}
+  .tabs{display:flex; gap:4px; margin:-8px 0 22px; border-bottom:1px solid var(--line);}
+  .tabs a{
+    font-family:'Barlow Condensed', sans-serif; font-weight:600; font-size:18px; letter-spacing:.4px;
+    color:var(--ink-soft); text-decoration:none; padding:10px 18px 9px; border-bottom:3px solid transparent; margin-bottom:-1px;
+  }
+  .tabs a:hover{color:var(--ink);}
+  .tabs a[aria-current="page"]{color:var(--ink); border-bottom-color:var(--teal);}
+
   .overall{
     display:flex; align-items:center; gap:8px;
     font-size:13px; font-weight:500;
@@ -483,6 +491,11 @@
       <div class="clock"><div class="day" id="clockDay">—</div><div id="clockTime">—</div></div>
     </div>
   </div>
+
+  <nav class="tabs" aria-label="Dashboard sections">
+    <a href="/" aria-current="page">Dashboard</a>
+    <a href="/workflow">Workflow</a>
+  </nav>
 
   <div class="apps">
     <a class="app-tile" href="https://zapier.com/app/login" target="_blank" rel="noopener">
