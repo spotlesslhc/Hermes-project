@@ -4859,6 +4859,96 @@ async function handleZapierStatusWebhook(request, env) {
   return json({ ok: true });
 }
 
+// ---- Cloudflare Access: verify the request really came through Access ------
+//
+// Nothing inside this Worker authenticates the dashboard API; it relies on
+// Cloudflare Access sitting in front of every address the Worker answers on.
+// If any address is ever left uncovered (a preview URL, a new hostname, a
+// misconfigured policy) the whole API would be open. Access puts a signed JWT
+// on each request it lets through (`Cf-Access-Jwt-Assertion`); checking it here
+// means an uncovered address fails closed instead of open.
+//
+// Configuration (plain vars in wrangler.jsonc; none are secrets):
+//   CF_ACCESS_TEAM_DOMAIN  e.g. "yourteam.cloudflareaccess.com"
+//   CF_ACCESS_AUD          the Access application's AUD tag; comma-separate
+//                          several if the workers.dev and custom-domain
+//                          Access apps each have their own
+//   CF_ACCESS_MODE         "log"     verify and record failures, never block
+//                          "enforce" refuse requests that fail verification
+// Unset (the default) = off: behavior is unchanged. Webhooks are exempt: they
+// bypass Access by design and use their own secrets.
+const ACCESS_JWKS_TTL_MS = 60 * 60 * 1000;
+let accessJwksCache = { team: null, keys: null, fetchedAt: 0 };
+
+function b64urlToBytes(str) {
+  const pad = "=".repeat((4 - (str.length % 4)) % 4);
+  const bin = atob(str.replace(/-/g, "+").replace(/_/g, "/") + pad);
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+async function getAccessKeys(env, { force = false } = {}) {
+  const team = env.CF_ACCESS_TEAM_DOMAIN;
+  const fresh = accessJwksCache.team === team && accessJwksCache.keys && Date.now() - accessJwksCache.fetchedAt < ACCESS_JWKS_TTL_MS;
+  if (fresh && !force) return accessJwksCache.keys;
+  try {
+    const res = await fetch(`https://${team}/cdn-cgi/access/certs`);
+    if (!res.ok) throw new Error(`Access key fetch failed: ${res.status}`);
+    const body = await res.json();
+    accessJwksCache = { team, keys: body.keys || [], fetchedAt: Date.now() };
+  } catch (err) {
+    // A brief outage of the key endpoint must not lock Bryce out in enforce
+    // mode: keep using the last keys we fetched (they only change on rotation).
+    if (accessJwksCache.team === team && accessJwksCache.keys) return accessJwksCache.keys;
+    throw err;
+  }
+  return accessJwksCache.keys;
+}
+
+// Returns { ok: true, claims } or { ok: false, reason }.
+async function verifyAccessJwt(env, token) {
+  try {
+    if (!token) return { ok: false, reason: "no Access token on the request" };
+    const parts = token.split(".");
+    if (parts.length !== 3) return { ok: false, reason: "malformed token" };
+    const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(parts[0])));
+    if (header.alg !== "RS256") return { ok: false, reason: "unexpected signing algorithm" };
+    let jwk = (await getAccessKeys(env)).find((k) => k.kid === header.kid);
+    if (!jwk) jwk = (await getAccessKeys(env, { force: true })).find((k) => k.kid === header.kid); // key rotation
+    if (!jwk) return { ok: false, reason: "signing key not recognised" };
+    const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+    const valid = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64urlToBytes(parts[2]), new TextEncoder().encode(`${parts[0]}.${parts[1]}`));
+    if (!valid) return { ok: false, reason: "bad signature" };
+    const claims = JSON.parse(new TextDecoder().decode(b64urlToBytes(parts[1])));
+    const now = Math.floor(Date.now() / 1000), leeway = 60;
+    if (typeof claims.exp !== "number" || claims.exp + leeway < now) return { ok: false, reason: "token expired" };
+    if (typeof claims.nbf === "number" && claims.nbf - leeway > now) return { ok: false, reason: "token not valid yet" };
+    if (claims.iss !== `https://${env.CF_ACCESS_TEAM_DOMAIN}`) return { ok: false, reason: "wrong issuer" };
+    const wanted = String(env.CF_ACCESS_AUD || "").split(",").map((a) => a.trim()).filter(Boolean);
+    const got = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+    if (!wanted.length || !got.some((a) => wanted.includes(a))) return { ok: false, reason: "token is for a different application" };
+    return { ok: true, claims };
+  } catch (err) {
+    return { ok: false, reason: `could not verify (${err.message})` };
+  }
+}
+
+// Returns a Response to refuse the request, or null to carry on.
+async function checkAccessJwt(request, env, pathname) {
+  const mode = String(env.CF_ACCESS_MODE || "").toLowerCase();
+  if ((mode !== "log" && mode !== "enforce") || !env.CF_ACCESS_TEAM_DOMAIN || !env.CF_ACCESS_AUD) return null;
+  if (pathname.startsWith("/webhooks/")) return null;
+  const result = await verifyAccessJwt(env, request.headers.get("cf-access-jwt-assertion"));
+  if (result.ok) return null;
+  if (mode === "enforce") return json({ error: "Not authenticated" }, { status: 403 });
+  // Log-only: say so in the Activity log, at most once an hour, never block.
+  console.warn(`Access JWT check failed (log-only): ${result.reason} [${pathname}]`);
+  if (!(await env.HERMES_KV.get("access_jwt_warned"))) {
+    await env.HERMES_KV.put("access_jwt_warned", "1", { expirationTtl: 3600 });
+    await appendLog(env, { who: "Deja", what: `Access check (log-only): a request reached ${pathname} without a valid Cloudflare Access token: ${result.reason}` });
+  }
+  return null;
+}
+
 async function handlePendingList(env) {
   return json(await listPendingActions(env));
 }
@@ -4919,6 +5009,9 @@ function guardRequest(request, pathname, method) {
 
 export default {
   async fetch(request, env) {
+    const notAuthenticated = await checkAccessJwt(request, env, new URL(request.url).pathname);
+    if (notAuthenticated) return notAuthenticated;
+
     const { pathname } = new URL(request.url);
     const { method } = request;
 
