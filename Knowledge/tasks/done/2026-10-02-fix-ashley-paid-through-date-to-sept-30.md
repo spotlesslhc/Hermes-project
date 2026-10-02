@@ -13,3 +13,11 @@ immediately (see [[claude-code-task-queue]]).
 ## What Bryce wants
 
 Ashley's cleaner payroll record has paidThrough = 2026-10-01. Bryce says payroll actually went out on September 30th, so it should be 2026-09-30. Because of the wrong date, her 2211 Sahara Drive clean on Oct 1 is treated as already paid, and she still hasn't been paid for it. Please change her paid-through date to 2026-09-30, then check get_cleaner_payroll for Ashley and confirm that the Oct 1 Sahara clean now shows as owed, with the amount. Deja has no tool to edit a paid-through date. record_cleaner_payment only moves it forward.
+
+## Outcome (2026-10-02)
+
+Not done as written. Bryce clarified that he already paid Ashley for the
+Sahara Oct 1 clean and recorded it in Wave by hand, so resetting
+paid-through to 2026-09-30 would make it show as owed again (double-pay
+risk). The real bug was in `recordCleanerPayment`, fixed in PR #87. See
+[[2026-10-02-payroll-paid-through-stamped-record-date]].
