@@ -97,6 +97,21 @@ overrides the default; there's no dashboard UI for editing it yet).
   [[unfinished-projects/zapier-overseer-buildout]] (formerly
   `Knowledge/unfinished-projects/zapier-overseer-buildout.md`).
 
+## Creating cleans from Deja (`create_clean_event`, added 2026-10-02)
+
+Deja can add a clean herself (`createCleanEvent`): same standard format as
+above, copying title, location, description and free/busy from the property's
+latest earlier clean, Peacock unless `same_day_checkin` (then Basil, and the
+"Same day checkin" line is added to the description). Matches by street number;
+nicknames (`DEFAULT_PROPERTY_NICKNAMES`, currently `ryan` → 1885 E Birkdale Ln,
+KV `property_nicknames` overrides) work, and a nicknamed event gets the address
+appended so street-number matching (assign_cleaner, the invoice check) works.
+No-op if that property already has a clean that day; asks for an address if
+there's nothing earlier to copy. No approval (nobody is notified); undo by
+deleting the event. Invites nobody — `assign_cleaner` is the next step.
+An *existing* event titled just "Ryan" is not fixed by this; rename it in
+Calendar (add the street number) so assign_cleaner can match it.
+
 ## Related: what each cleaner is owed
 
 The "Pay is $X" line in each event's description (documented above) is
