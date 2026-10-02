@@ -274,6 +274,20 @@
   .log-row .what{color:var(--ink);}
   .log-row.compact{grid-template-columns:72px 1fr;}
   .log-empty{padding:14px 16px; font-size:12.5px; color:var(--ink-soft);}
+  /* Long activity entries fold into a short title with an arrow; click to expand. */
+  .log-toggle{
+    all:unset; box-sizing:border-box; display:flex; align-items:flex-start; gap:6px;
+    width:100%; cursor:pointer; color:var(--ink);
+  }
+  .log-toggle:focus-visible{outline:2px solid var(--teal-deep); outline-offset:2px; border-radius:3px;}
+  .log-title{flex:0 1 auto; min-width:0; overflow-wrap:anywhere;}
+  .log-arrow{
+    flex:none; width:16px; height:16px; margin-top:1px; color:var(--ink-soft);
+    transition:transform .15s ease;
+  }
+  .log-toggle[aria-expanded="true"] .log-arrow{transform:rotate(90deg);}
+  .log-full{margin-top:6px; padding-left:2px; color:var(--ink-soft); white-space:pre-wrap; overflow-wrap:anywhere;}
+  .log-full[hidden]{display:none;}
 
   /* Activity — one list per agent */
   .activity-grid{
@@ -786,6 +800,51 @@
     'Site Editor': 'logList-site_editor'
   };
 
+  // Long entries (more than ~90 characters, or multi-line) show as a short title
+  // plus an arrow; clicking expands the whole text. Short entries stay as-is.
+  const LOG_LONG = 90;
+  const expandedLogs = new Set();
+  function logTitle(text){
+    const flat = String(text).replace(/\s+/g, ' ').trim();
+    const cut = flat.slice(15).search(/(\. |: | — | - |; | \()/);
+    let title = cut >= 0 ? flat.slice(0, cut + 15) : flat;
+    if(title.length > 70) title = title.slice(0, 67).replace(/\s+\S*$/, '') + '…';
+    return title.replace(/[.:;,]$/, '');
+  }
+  function logRowHtml(e){
+    const what = String(e.what || '');
+    const key = (e.time || '') + '|' + what.slice(0, 60);
+    if(what.length <= LOG_LONG && what.indexOf('\n') < 0){
+      return `
+            <div class="log-row compact">
+              <span class="t">${timeAgo(e.time)}</span>
+              <span class="what">${escapeHtml(what)}</span>
+            </div>`;
+    }
+    const open = expandedLogs.has(key);
+    return `
+            <div class="log-row compact">
+              <span class="t">${timeAgo(e.time)}</span>
+              <span class="what">
+                <button type="button" class="log-toggle" aria-expanded="${open}" data-key="${escapeHtml(key)}">
+                  <span class="log-title">${escapeHtml(logTitle(what))}</span>
+                  <svg class="log-arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg>
+                </button>
+                <div class="log-full"${open ? '' : ' hidden'}>${escapeHtml(what)}</div>
+              </span>
+            </div>`;
+  }
+  document.addEventListener('click', (ev) => {
+    const btn = ev.target.closest && ev.target.closest('.log-toggle');
+    if(!btn) return;
+    const open = btn.getAttribute('aria-expanded') !== 'true';
+    btn.setAttribute('aria-expanded', String(open));
+    const full = btn.parentElement.querySelector('.log-full');
+    if(full) full.hidden = !open;
+    const key = btn.getAttribute('data-key');
+    if(open) expandedLogs.add(key); else expandedLogs.delete(key);
+  });
+
   async function loadLog(){
     try{
       const res = await fetch('/api/log');
@@ -802,11 +861,7 @@
         const container = document.getElementById(id);
         const rows = grouped[who];
         container.innerHTML = rows.length
-          ? rows.map(e => `
-            <div class="log-row compact">
-              <span class="t">${timeAgo(e.time)}</span>
-              <span class="what">${e.what || ''}</span>
-            </div>`).join('')
+          ? rows.map(logRowHtml).join('')
           : '<div class="log-empty">No activity yet</div>';
       });
     }catch(e){ /* Not deployed yet, or offline — leave the preview data showing. */ }

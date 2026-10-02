@@ -214,3 +214,29 @@ never sees a password.
   before Send is harmless. The Activity log records each attempt.
 - The paused 3-week reminder system could be switched to use this instead of
   the staged-text/Claude Code route if Bryce wants it resumed.
+
+## Established method for sending Amy her cleaning invites (confirmed 2026-10-02)
+
+Proven live: two approved link texts to Amy went out and showed in her Google
+Voice thread. Amy has no Google Calendar app and her invite emails never
+reached her inbox, so this is how she gets her cleans from now on:
+
+1. Calendar invite goes out as usual (`assign_cleaner`, or
+   `resend_cleaner_invites` if she says she never saw it).
+2. Ask Deja to text Amy her upcoming cleans. Deja pulls the links with
+   `get_clean_invite_links` and queues `text_cleaner` (600 characters max, so
+   she splits long lists into several texts of 1-3 cleans, each with its link
+   and the property/day/time written out, since the link may not open for an
+   iCloud-only cleaner).
+3. Bryce approves each text in Pending Actions, **one at a time**, and Deja
+   confirms with `check_text_status` (and the thread in Google Voice) before
+   the next. Never treat "approved" as "delivered".
+4. If a send fails or is UNCONFIRMED, run `test_voice_compose` (sends nothing)
+   and check `/api/voice-screenshot?step=...` before retrying. If Voice
+   reports an expired login, redo `/api/browserbase/voice-login`.
+
+Why the flow works: it searches Amy's number in the Google Voice search box
+and opens her **existing thread**, requiring the header to show her number
+before typing anything; the Send button must be enabled, the box must clear,
+and the text must appear in the thread. Same method applies to any roster
+cleaner once their number is saved with `set_cleaner_phone`.
