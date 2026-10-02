@@ -743,6 +743,17 @@ const VOICE_CONTEXT_KEY = "browserbase_voice_context_id";
 const VOICE_LOGIN_SESSION_KEY = "browserbase_voice_login_session_id";
 const VOICE_HOSTS = new Set(["voice.google.com"]);
 
+// Keyed hash of a saved number, so an approval can be bound to the exact number
+// it showed without storing the number again (a plain hash of a 10-digit phone
+// number can be brute-forced; the key makes it useless outside this Worker).
+async function recipientFingerprint(env, phone) {
+  const keyText = env.ZAPIER_WEBHOOK_SECRET ? await env.ZAPIER_WEBHOOK_SECRET.get() : "";
+  if (!keyText) return null;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(keyText), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`recipient:${phone}`));
+  return Array.from(new Uint8Array(sig)).slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 async function getCleanerPhones(env) {
   const raw = await env.HERMES_KV.get("cleaner_phones");
   return raw ? JSON.parse(raw) : {};
@@ -961,12 +972,19 @@ async function checkGoogleVoice(env) {
 
 // Runs the Google Voice compose flow. send:false is the dry run: it goes as far
 // as typing the message, takes screenshots, clears the box and sends NOTHING.
-async function runVoiceCompose(env, { cleaner_name, message, send }) {
+async function runVoiceCompose(env, { cleaner_name, message, send, expectedRecipient }) {
   const roster = await getCleanerRoster(env);
   const key = String(cleaner_name || "").trim().toLowerCase();
   if (!roster[key]) throw new Error(`Unknown cleaner "${cleaner_name}". Known cleaners: ${Object.keys(roster).join(", ")}.`);
   const phone = (await getCleanerPhones(env))[key];
   if (!phone) throw new Error(`No text number saved for ${cleaner_name}. Ask Bryce for it and save it with set_cleaner_phone.`);
+  if (send) {
+    // The approval card showed the number's last 4 digits and bound the approval
+    // to that exact number. Anything that changed it since (or an approval queued
+    // without the binding) must not send.
+    if (!expectedRecipient) throw new Error(`This text was queued without a recipient check, so nothing was sent. Ask Deja to queue it again.`);
+    if (expectedRecipient !== (await recipientFingerprint(env, phone))) throw new Error(`The saved number for ${cleaner_name} changed after this text was queued, so nothing was sent. Ask Deja to queue it again and check the number on the card.`);
+  }
   const body = String(message || "").trim();
   if (!body || body.length > 600) throw new Error("message must be 1-600 characters.");
   const national = phone.slice(2);
@@ -1073,8 +1091,8 @@ async function runVoiceCompose(env, { cleaner_name, message, send }) {
   }
 }
 
-async function sendGoogleVoiceText(env, { cleaner_name, message }) {
-  return await runVoiceCompose(env, { cleaner_name, message, send: true });
+async function sendGoogleVoiceText(env, { cleaner_name, message, expectedRecipient }) {
+  return await runVoiceCompose(env, { cleaner_name, message, send: true, expectedRecipient });
 }
 
 // Read-only: what actually happened to recent approved texts. The approval
@@ -3301,6 +3319,7 @@ async function addToPendingIndex(env, id) {
 }
 
 async function createPendingAction(env, { tool, input, reason }) {
+  if (tool === "text_cleaner") input = await bindTextRecipient(env, input);
   const id = crypto.randomUUID();
   const record = {
     id, tool, input, reason: reason || null,
@@ -3313,6 +3332,17 @@ async function createPendingAction(env, { tool, input, reason }) {
   await addToPendingIndex(env, id);
   await appendLog(env, { who: "Approval queue", what: `${tool} queued for Bryce's approval` + (reason ? ` — ${reason}` : "") });
   return record;
+}
+
+// A text approval has to show who it really goes to. The recipient is a
+// roster name, but the number is looked up from KV when the text is sent, so
+// the card carries the last 4 digits and a keyed fingerprint of the number, and
+// sending fails if the saved number is no longer the one that was approved.
+async function bindTextRecipient(env, input) {
+  const key = String((input && input.cleaner_name) || "").trim().toLowerCase();
+  const phone = (await getCleanerPhones(env))[key];
+  if (!phone) return input; // runVoiceCompose will refuse: no saved number
+  return { ...input, to_last4: phone.slice(-4), to_fp: await recipientFingerprint(env, phone) };
 }
 
 async function listPendingActions(env, { status = "pending" } = {}) {
@@ -3818,7 +3848,7 @@ async function dispatchTool(env, name, input) {
   if (name === "get_clean_invite_links") return await getCleanInviteLinks(env, { cleaner_name: input.cleaner_name, days: input.days });
   if (name === "set_cleaner_phone") return await setCleanerPhone(env, input);
   if (name === "text_cleaner_schedule") return await queueCleanerScheduleText(env, { cleaner_name: input.cleaner_name, days: input.days });
-  if (name === "text_cleaner") return await sendGoogleVoiceText(env, { cleaner_name: input.cleaner_name, message: input.message });
+  if (name === "text_cleaner") return await sendGoogleVoiceText(env, { cleaner_name: input.cleaner_name, message: input.message, expectedRecipient: input.to_fp });
   if (name === "check_google_voice") return await checkGoogleVoice(env);
   if (name === "test_voice_compose") return await runVoiceCompose(env, { cleaner_name: input.cleaner_name, message: input.message || "test", send: false });
   if (name === "browse_google_business") return await browseGoogleBusiness(env, input);
