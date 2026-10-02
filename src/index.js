@@ -223,6 +223,29 @@ async function listCleansEventsForDay(env, calendarId, dateOnly) {
 const SPOTIFY_REDIRECT_URI = "https://hermes-project.spotlesscleaninglhc.workers.dev/api/spotify/callback";
 const SPOTIFY_SCOPES = "user-modify-playback-state user-read-playback-state user-read-currently-playing";
 
+// ---- OAuth sign-in: the `state` check ------------------------------------
+//
+// A callback that accepts any `code` can be fed a code the attacker obtained
+// for their own account, swapping the stored connection. Each login now mints
+// a random single-use `state`, kept in KV for 10 minutes, and the callback
+// refuses anything that doesn't present one. Only someone who got past
+// Cloudflare Access to /login can mint one.
+async function newOauthState(env, provider) {
+  const state = crypto.randomUUID();
+  await env.HERMES_KV.put(`oauth_state:${provider}:${state}`, "1", { expirationTtl: 600 });
+  return state;
+}
+
+async function consumeOauthState(env, provider, state) {
+  if (!state || !/^[0-9a-f-]{36}$/.test(state)) return false;
+  const key = `oauth_state:${provider}:${state}`;
+  if (!(await env.HERMES_KV.get(key))) return false;
+  await env.HERMES_KV.delete(key);
+  return true;
+}
+
+const OAUTH_STATE_ERROR = "That sign-in link is invalid or has expired. Start again from the dashboard.";
+
 async function handleSpotifyLogin(env) {
   const clientId = await env.SPOTIFY_CLIENT_ID.get();
   const url = new URL("https://accounts.spotify.com/authorize");
@@ -230,6 +253,7 @@ async function handleSpotifyLogin(env) {
   url.searchParams.set("response_type", "code");
   url.searchParams.set("redirect_uri", SPOTIFY_REDIRECT_URI);
   url.searchParams.set("scope", SPOTIFY_SCOPES);
+  url.searchParams.set("state", await newOauthState(env, "spotify"));
   return Response.redirect(url.toString(), 302);
 }
 
@@ -263,6 +287,7 @@ async function handleSpotifyCallback(request, env) {
   if (error) return new Response(`Spotify authorization failed: ${error}`, { status: 400 });
   const code = url.searchParams.get("code");
   if (!code) return new Response("Missing code", { status: 400 });
+  if (!(await consumeOauthState(env, "spotify", url.searchParams.get("state")))) return new Response(OAUTH_STATE_ERROR, { status: 400 });
 
   const data = await spotifyTokenRequest(env, {
     grant_type: "authorization_code",
@@ -385,6 +410,7 @@ async function handleGoogleCalendarLogin(env) {
   url.searchParams.set("scope", GOOGLE_CALENDAR_SCOPE);
   url.searchParams.set("access_type", "offline");
   url.searchParams.set("prompt", "consent");
+  url.searchParams.set("state", await newOauthState(env, "google-calendar"));
   return Response.redirect(url.toString(), 302);
 }
 
@@ -414,6 +440,7 @@ async function handleGoogleCalendarCallback(request, env) {
   if (error) return new Response(`Google Calendar authorization failed: ${error}`, { status: 400 });
   const code = url.searchParams.get("code");
   if (!code) return new Response("Missing code", { status: 400 });
+  if (!(await consumeOauthState(env, "google-calendar", url.searchParams.get("state")))) return new Response(OAUTH_STATE_ERROR, { status: 400 });
 
   const data = await googleCalendarTokenRequest(env, {
     grant_type: "authorization_code",
