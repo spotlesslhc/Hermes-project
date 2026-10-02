@@ -4878,12 +4878,52 @@ async function handlePendingDecide(request, env) {
   }
 }
 
+// ---- Request guard: only this site may change things ----------------------
+//
+// The dashboard and its API sit behind Cloudflare Access, whose session cookie
+// a browser attaches to requests started by *other* sites too. This guard makes
+// the Worker itself refuse the cross-site shapes, so nothing depends on that
+// cookie's settings:
+//   - any state-changing request (not GET/HEAD) must be application/json
+//     (a plain HTML form cannot send that without a CORS preflight, which this
+//     Worker never grants), and must not be marked cross-site by the browser
+//     (Origin / Sec-Fetch-Site);
+//   - the GET routes that start or end a browser session refuse cross-site
+//     navigations.
+// Non-browser callers (the local scripts) send neither header and pass. Webhooks
+// are exempt: they have no browser and authenticate with their own secrets. The
+// OAuth callbacks stay open to the provider's redirect and are protected by
+// their `state` check.
+const STATE_CHANGING_GET_PATHS = new Set([
+  "/api/browserbase/login", "/api/browserbase/login/done",
+  "/api/browserbase/voice-login", "/api/browserbase/voice-login/done"
+]);
+
+function guardRequest(request, pathname, method) {
+  if (pathname.startsWith("/webhooks/")) return null;
+  const site = request.headers.get("sec-fetch-site");
+  if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+    if (!/^application\/json(\s*;|$)/i.test(request.headers.get("content-type") || "")) {
+      return json({ error: "Content-Type must be application/json" }, { status: 415 });
+    }
+    const origin = request.headers.get("origin");
+    if (origin && origin !== new URL(request.url).origin) return json({ error: "Cross-origin request refused" }, { status: 403 });
+    if (site && site !== "same-origin" && site !== "none") return json({ error: "Cross-site request refused" }, { status: 403 });
+  } else if (STATE_CHANGING_GET_PATHS.has(pathname) && (site === "cross-site" || site === "same-site")) {
+    return json({ error: "Open this from the dashboard" }, { status: 403 });
+  }
+  return null;
+}
+
 // ---- Router -----------------------------------------------------------
 
 export default {
   async fetch(request, env) {
     const { pathname } = new URL(request.url);
     const { method } = request;
+
+    const refused = guardRequest(request, pathname, method);
+    if (refused) return refused;
 
     if (pathname === "/api/status" && method === "GET") {
       return json(await getStatusOrDefault(env));
