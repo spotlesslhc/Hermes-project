@@ -3291,7 +3291,42 @@ async function json(data, init = {}) {
 // (propose_site_edit already has its own GitHub-PR review gate). Approval only ever happens via the dashboard's
 // Approve/Deny buttons, never by chat/voice reply.
 
-const APPROVAL_REQUIRED_TOOLS = new Set(["cancel_turno_clean", "edit_google_business", "reschedule_clean", "cancel_clean", "send_wave_invoices", "text_cleaner"]);
+const APPROVAL_REQUIRED_TOOLS = new Set(["cancel_turno_clean", "edit_google_business", "reschedule_clean", "cancel_clean", "send_wave_invoices", "text_cleaner", "set_cleaner_phone"]);
+
+// ---- Taint gate: text from outside the business can't trigger actions -----
+//
+// Email bodies, web pages, Google Business pages and Google Voice message
+// lists (anyone can text that number) are written by people outside the
+// business. The prompt tells Deja to treat them as untrusted, but
+// a prompt is not a control, so this is the control: once a conversation has
+// run any tool that returns outside text, every tool that is not plainly
+// read-only goes through the approval queue instead of running. It fails
+// closed: a tool added later is gated until someone deliberately lists it in
+// TAINT_SAFE_TOOLS. Tools in APPROVAL_REQUIRED_TOOLS are gated either way.
+const UNTRUSTED_CONTENT_TOOLS = new Set(["search_gmail", "read_email", "fetch_site", "browse_google_business", "check_text_status", "check_google_voice"]);
+const TAINT_SAFE_TOOLS = new Set([
+  "search_gmail", "read_email", "fetch_site", "browse_google_business",
+  "list_vault_notes", "read_vault_note", "list_upcoming_cleanings", "get_cleaner_payroll",
+  "check_invoice_payment", "audit_draft_invoices", "list_wave_invoices",
+  "check_text_status", "get_clean_invite_links", "check_google_voice", "control_spotify"
+]);
+
+// True when this conversation (earlier turns replayed from the dashboard, plus
+// this request) has already run a tool that returns outside text. `degraded`
+// means the replayed history could not be trusted to carry its tool calls, and
+// a plain-text assistant turn means the client never sent them, so in both
+// cases we can't tell and assume the worst.
+function conversationIsTainted(messages, degraded) {
+  if (degraded) return true;
+  for (const m of messages) {
+    if (m.role !== "assistant") continue;
+    if (typeof m.content === "string") return true;
+    for (const b of m.content) {
+      if (b.type === "tool_use" && UNTRUSTED_CONTENT_TOOLS.has(b.name)) return true;
+    }
+  }
+  return false;
+}
 
 // KV's list() operation has its own, much smaller daily quota (1,000/day on
 // the free plan) than get()/put() (100,000/day) — and the dashboard polls
@@ -4059,7 +4094,9 @@ function sanitizeHistory(raw) {
   const trimmed = start === -1 ? [] : clean.slice(start);
 
   if (historyPairsAreValid(trimmed)) return trimmed;
-  return textOnlyHistory(trimmed);
+  const fallback = textOnlyHistory(trimmed);
+  fallback.degraded = true; // tool calls were dropped, so the taint gate must assume the worst
+  return fallback;
 }
 
 // Every assistant tool_use must be answered by a tool_result for the same ids
@@ -4632,8 +4669,13 @@ async function handleAsk(request, env) {
     const toolResults = [];
     for (const toolUse of toolUses) {
       let toolResult;
-      if (APPROVAL_REQUIRED_TOOLS.has(toolUse.name)) {
-        const pending = await createPendingAction(env, { tool: toolUse.name, input: toolUse.input });
+      const tainted = !TAINT_SAFE_TOOLS.has(toolUse.name) && conversationIsTainted(messages, history.degraded);
+      if (APPROVAL_REQUIRED_TOOLS.has(toolUse.name) || tainted) {
+        const pending = await createPendingAction(env, {
+          tool: toolUse.name,
+          input: toolUse.input,
+          reason: tainted && !APPROVAL_REQUIRED_TOOLS.has(toolUse.name) ? "Deja read email or web content earlier in this conversation, so this needs your approval" : undefined
+        });
         toolResult = `This requires Bryce's approval before it runs. Queued on the dashboard as pending action #${pending.id.slice(0, 8)}. Tell him plainly you're waiting on his review there \u2014 don't say it's done.`;
       } else {
         try {
