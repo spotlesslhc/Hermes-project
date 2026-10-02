@@ -105,6 +105,13 @@
   "routes": [
     { "pattern": "hermes.spotlesslhc.com", "custom_domain": true }
   ],
+  // Optional: have the Worker itself verify the Cloudflare Access token on every
+  // non-webhook request (defense in depth if an address is ever left uncovered
+  // by Access). Add these under "vars" below. Start with "log" and check the
+  // Activity log stays quiet for a few days before switching to "enforce".
+  //   "CF_ACCESS_TEAM_DOMAIN": "yourteam.cloudflareaccess.com",
+  //   "CF_ACCESS_AUD": "<Access application AUD tag>[,<second app's AUD tag>]",
+  //   "CF_ACCESS_MODE": "log"
   "vars": {
     "HERMES_DEBUG_TOOLS": "false",
     // Bryce's own Telegram chat id with the Hermes bot -- not secret (just
