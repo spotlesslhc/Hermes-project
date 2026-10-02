@@ -81,6 +81,9 @@ just fire a one-way webhook.
   keys. It does **not** edit Wave invoice dates (no verified mutation); the
   result tells Bryce to check the invoice by hand. Reverse by moving it back;
   to change who's invited afterward, use `assign_cleaner`.
+  Every move is also written to the KV `clean_moves` log, which the
+  Bookkeeper's 4pm invoice check uses to fix draft invoice dates — see
+  [[invoice-sending]].
 - Google Calendar OAuth (`handleGoogleCalendarLogin/Callback`,
   `getGoogleCalendarAccessToken`) — one-time-authorize, refresh-token-in-
   KV pattern, same as [[spotify-control]]. "Connect Calendar (Turno)"
