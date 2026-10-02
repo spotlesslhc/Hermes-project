@@ -897,18 +897,33 @@ async function openVoiceSession(env) {
     })(${JSON.stringify(digits)})`)) === true;
     // New-message flow: after typing the number, click the suggestion that shows
     // it, directly under the recipient box (never the dialer panel on the right).
+    // Search results / suggestions: click, in order of preference, the
+    // "Message <number>" option, then the contact row (by name), then any other
+    // row showing the number. Never a "Call ..." option (that would dial), and
+    // never anything entirely to the right of the search box (the dialer panel).
     const pickSuggestion = async (digits, name) => JSON.parse((await evalValue(`(function(digits, name){
       const a = document.activeElement; if (!a) return JSON.stringify({ clicked: false });
       const ar = a.getBoundingClientRect();
       const c = Array.from(document.querySelectorAll('*')).filter((el) => {
-        const r = el.getBoundingClientRect(); const cx = r.left + r.width / 2; const cy = r.top + r.height / 2;
-        return r.width > 40 && r.height > 15 && r.height < 90 && cy > ar.bottom - 5 && cy < ar.bottom + 380 && cx > ar.left - 40 && cx < ar.right + 40 && el !== a && !el.contains(a) && !['INPUT', 'TEXTAREA'].includes(el.tagName);
-      }).map((el) => ({ el, text: (el.innerText || '').trim(), r: el.getBoundingClientRect() }))
-        .filter((x) => x.text.length < 120 && (x.text.replace(/\\D/g, '').includes(digits) || (name && x.text.split('\\n')[0].trim().toLowerCase() === name.toLowerCase())))
-        .sort((a, b) => a.r.width * a.r.height - b.r.width * b.r.height);
-      if (!c.length) return JSON.stringify({ clicked: false });
-      const b = c[0]; return JSON.stringify({ clicked: true, label: b.text.split('\\n').join(' ').slice(0, 60), x: b.r.left + b.r.width / 2, y: b.r.top + b.r.height / 2 });
+        const r = el.getBoundingClientRect();
+        return r.width > 40 && r.height > 18 && r.height < 100 && r.top > ar.bottom - 5 && r.left < ar.right && el !== a && !el.contains(a) && !['INPUT', 'TEXTAREA'].includes(el.tagName);
+      }).map((el) => {
+        const text = (el.innerText || '').trim(); const first = text.split('\\n')[0].trim();
+        return { el, text, first, r: el.getBoundingClientRect(), d: text.replace(/\\D/g, '') };
+      }).filter((x) => x.text.length > 0 && x.text.length < 120 && !/^call\\b/i.test(x.first) && !/call/i.test(x.el.getAttribute('aria-label') || ''));
+      const tier = (x) => (/^message\\b/i.test(x.first) && x.d.includes(digits)) ? 1 : (name && x.first.toLowerCase() === name.toLowerCase()) ? 2 : x.d.includes(digits) ? 3 : 9;
+      const ranked = c.filter((x) => tier(x) < 9).sort((p, q) => tier(p) - tier(q) || p.r.width * p.r.height - q.r.width * q.r.height);
+      if (!ranked.length) return JSON.stringify({ clicked: false });
+      const b = ranked[0]; return JSON.stringify({ clicked: true, tier: tier(b), label: b.text.split('\\n').join(' ').slice(0, 60), x: b.r.left + b.r.width / 2, y: b.r.top + b.r.height / 2 });
     })(${JSON.stringify(digits)}, ${JSON.stringify(name || '')})`)) || "{}");
+    // Back to a clean inbox (drops any active search that hides the normal buttons).
+    const reset = async () => {
+      const loaded = cdp.waitFor("Page.loadEventFired", 20000);
+      await cdp.send("Page.navigate", { url: "https://voice.google.com/u/0/messages" }, sid);
+      await loaded;
+      await pause(3500);
+      await hostOk();
+    };
     const clickAt = async (x, y) => {
       for (const type of ["mousePressed", "mouseReleased"]) await cdp.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 }, sid);
     };
@@ -919,7 +934,7 @@ async function openVoiceSession(env) {
       await pause(500);
     };
     const clearCompose = async () => { await evalValue(`document.execCommand('selectAll'); document.execCommand('delete'); true`); };
-    return { sessionId: session.id, act, pressEnter, pageText, pause, evalValue, controls, shot, composeText, findSend, openThread, headerHas, pickSuggestion, clickAt, nudgeInput, clearCompose, close: async () => { if (cdp) cdp.close(); await bbReleaseSession(env, session.id); } };
+    return { sessionId: session.id, act, pressEnter, pageText, pause, evalValue, controls, shot, composeText, findSend, openThread, headerHas, pickSuggestion, reset, clickAt, nudgeInput, clearCompose, close: async () => { if (cdp) cdp.close(); await bbReleaseSession(env, session.id); } };
   } catch (err) {
     if (cdp) cdp.close();
     await bbReleaseSession(env, session.id);
@@ -983,6 +998,9 @@ async function runVoiceCompose(env, { cleaner_name, message, send }) {
     } else {
       trail.push("couldn't find the Search Google Voice box");
     }
+
+    // A leftover search hides the inbox's normal buttons and rows: start clean.
+    if (!viaThread) { await v.reset(); trail.push("reloaded the inbox"); }
 
     // 1) Existing thread row in the left list.
     const th = viaThread ? { clicked: false } : await v.openThread(cleaner_name, national);
