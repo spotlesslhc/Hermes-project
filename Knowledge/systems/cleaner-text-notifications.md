@@ -178,6 +178,17 @@ never sees a password.
   its right (not the left attach button, not the keypad panel); the outcome
   reports which method found it. If the box doesn't clear after the click it
   presses Enter once (Voice sends on Enter).
+- **Send button stayed disabled (2026-10-02, dry run):** `test_voice_compose`
+  found "Send message" by label with the message fully typed, but the button
+  stayed disabled even after nudging, i.e. Voice didn't accept the recipient
+  (the number was just text in the To box; the old check passed because the
+  suggestion dropdown also contained the digits). The compose flow now (1)
+  opens the cleaner's **existing thread** by clicking its left-list row (by name
+  or number) and verifies the thread header shows the number, which also needs
+  no recipient step; otherwise (2) types the number in the new-message box and
+  **clicks the suggestion** directly under it (never the dialer panel on the
+  right) instead of pressing Enter. Either way the real proof is the Send
+  button becoming enabled. New screenshot step `suggest`. Not yet re-run live.
 - **Replies** land in Bryce's Google Voice, not in Hermes; he reads and
   answers them himself.
 - **Untested against live Google Voice when it shipped.** The page selectors

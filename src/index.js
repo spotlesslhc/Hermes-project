@@ -869,6 +869,46 @@ async function openVoiceSession(env) {
       }).sort((a, b) => dist(a) - dist(b));
       return JSON.stringify(row.length ? pack(row[0], 'position') : { found: false });
     })()`)) || "{}");
+    // Existing conversation: click the left-list row for this cleaner (by name or
+    // by the number's digits). Far more reliable than the new-message flow when
+    // a thread already exists, and the thread header proves who it is.
+    const openThread = async (name, digits) => JSON.parse((await evalValue(`(function(name, digits){
+      const rows = Array.from(document.querySelectorAll('a, [role="listitem"], [role="option"], [role="button"], li, div')).filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 150 && r.height > 30 && r.height < 130 && r.left + r.width < 400 && r.top > 60;
+      }).map((el) => { const text = (el.innerText || '').trim(); return { el, r: el.getBoundingClientRect(), text, first: text.split('\\n')[0].trim().toLowerCase(), d: text.replace(/\\D/g, '') }; })
+        .filter((x) => x.text.length < 220 && (x.first === name.toLowerCase() || x.d.includes(digits)))
+        .sort((a, b) => a.r.width * a.r.height - b.r.width * b.r.height);
+      if (!rows.length) return JSON.stringify({ clicked: false });
+      const b = rows[0]; b.el.scrollIntoView({ block: 'center' });
+      const r = b.el.getBoundingClientRect();
+      return JSON.stringify({ clicked: true, label: b.first, x: r.left + r.width / 2, y: r.top + r.height / 2 });
+    })(${JSON.stringify(name)}, ${JSON.stringify(digits)})`)) || "{}");
+    // The open thread's header (top of the compose box's column) shows the number.
+    const headerHas = async (digits) => (await evalValue(`(function(digits){
+      const a = document.activeElement; if (!a) return false;
+      const ar = a.getBoundingClientRect();
+      return Array.from(document.querySelectorAll('*')).some((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0 || r.height > 60 || r.top > 200 || r.top < 40) return false;
+        const cx = r.left + r.width / 2;
+        return cx > ar.left - 10 && cx < ar.right + 10 && (el.innerText || '').replace(/\\D/g, '').includes(digits) && (el.innerText || '').length < 80;
+      });
+    })(${JSON.stringify(digits)})`)) === true;
+    // New-message flow: after typing the number, click the suggestion that shows
+    // it, directly under the recipient box (never the dialer panel on the right).
+    const pickSuggestion = async (digits) => JSON.parse((await evalValue(`(function(digits){
+      const a = document.activeElement; if (!a) return JSON.stringify({ clicked: false });
+      const ar = a.getBoundingClientRect();
+      const c = Array.from(document.querySelectorAll('*')).filter((el) => {
+        const r = el.getBoundingClientRect(); const cx = r.left + r.width / 2; const cy = r.top + r.height / 2;
+        return r.width > 40 && r.height > 15 && r.height < 90 && cy > ar.bottom - 5 && cy < ar.bottom + 380 && cx > ar.left - 40 && cx < ar.right + 40 && el !== a && !el.contains(a) && !['INPUT', 'TEXTAREA'].includes(el.tagName);
+      }).map((el) => ({ el, text: (el.innerText || '').trim(), r: el.getBoundingClientRect() }))
+        .filter((x) => x.text.length < 120 && x.text.replace(/\\D/g, '').includes(digits))
+        .sort((a, b) => a.r.width * a.r.height - b.r.width * b.r.height);
+      if (!c.length) return JSON.stringify({ clicked: false });
+      const b = c[0]; return JSON.stringify({ clicked: true, label: b.text.split('\\n').join(' ').slice(0, 60), x: b.r.left + b.r.width / 2, y: b.r.top + b.r.height / 2 });
+    })(${JSON.stringify(digits)})`)) || "{}");
     const clickAt = async (x, y) => {
       for (const type of ["mousePressed", "mouseReleased"]) await cdp.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 }, sid);
     };
@@ -879,7 +919,7 @@ async function openVoiceSession(env) {
       await pause(500);
     };
     const clearCompose = async () => { await evalValue(`document.execCommand('selectAll'); document.execCommand('delete'); true`); };
-    return { sessionId: session.id, act, pressEnter, pageText, pause, evalValue, controls, shot, composeText, findSend, clickAt, nudgeInput, clearCompose, close: async () => { if (cdp) cdp.close(); await bbReleaseSession(env, session.id); } };
+    return { sessionId: session.id, act, pressEnter, pageText, pause, evalValue, controls, shot, composeText, findSend, openThread, headerHas, pickSuggestion, clickAt, nudgeInput, clearCompose, close: async () => { if (cdp) cdp.close(); await bbReleaseSession(env, session.id); } };
   } catch (err) {
     if (cdp) cdp.close();
     await bbReleaseSession(env, session.id);
@@ -922,14 +962,31 @@ async function runVoiceCompose(env, { cleaner_name, message, send }) {
   let clickedSend = false;
   try {
     await v.shot("start");
-    if (!(await v.act("click", ["send new message", "new message", "start a new conversation"]))) throw new Error("couldn't find the new-message button in Google Voice. Nothing was sent.");
-    trail.push("opened new message");
-    if (!(await v.act("type", ["type a name or phone number", "name or phone number"], national))) throw new Error("couldn't find the recipient box. Nothing was sent.");
-    await v.pause(1500);
-    await v.pressEnter();
-    await v.shot("recipient");
-    if (!(await v.pageText()).replace(/\D/g, "").includes(last4)) throw new Error(`the recipient (number ending ${last4}) didn't show up in the new-message screen, so nothing was sent.`);
-    trail.push(`recipient ${last4} entered`);
+    // 1) Existing thread (reliable, and its header proves who it is).
+    let viaThread = false;
+    const th = await v.openThread(cleaner_name, national);
+    if (th.clicked) {
+      await v.clickAt(th.x, th.y);
+      await v.pause(1800);
+      if (await v.act("type", ["type a message", "message"], "")) {
+        viaThread = await v.headerHas(national);
+        trail.push(viaThread ? `opened the existing "${th.label}" thread (header shows the number)` : `clicked the "${th.label}" row but its header didn't show the number; using the new-message flow instead`);
+      }
+    }
+    // 2) New message: type the number and SELECT the suggestion so it becomes a real recipient.
+    if (!viaThread) {
+      if (!(await v.act("click", ["send new message", "new message", "start a new conversation"]))) throw new Error("couldn't find the new-message button in Google Voice. Nothing was sent.");
+      trail.push("opened new message");
+      if (!(await v.act("type", ["type a name or phone number", "name or phone number"], national))) throw new Error("couldn't find the recipient box. Nothing was sent.");
+      await v.pause(1800);
+      await v.shot("suggest");
+      const sug = await v.pickSuggestion(national);
+      if (sug.clicked) { await v.clickAt(sug.x, sug.y); await v.pause(1500); trail.push(`picked the suggestion "${sug.label}"`); }
+      else { await v.pressEnter(); trail.push("no suggestion to click; pressed Enter"); }
+      await v.shot("recipient");
+      if (!(await v.pageText()).replace(/\D/g, "").includes(last4)) throw new Error(`the recipient (number ending ${last4}) didn't show up in the new-message screen, so nothing was sent.`);
+      trail.push(`recipient ${last4} entered`);
+    }
     if (!(await v.act("type", ["type a message", "message"], body))) throw new Error("couldn't find the message box. Nothing was sent.");
     await v.pause(800);
     let before = (await v.composeText()).trim();
@@ -939,12 +996,12 @@ async function runVoiceCompose(env, { cleaner_name, message, send }) {
     if (before.replace(/\s+/g, "").length < body.replace(/\s+/g, "").length * 0.9) throw new Error(`only part of the message entered the box (${before.length} of ${body.length} characters). Nothing was sent.`);
 
     let btn = await v.findSend();
-    if (btn.found && btn.disabled) { await v.nudgeInput(); btn = await v.findSend(); trail.push("Send button was disabled; nudged the box"); }
+    if (btn.found && btn.disabled) { await v.nudgeInput(); btn = await v.findSend(); trail.push(`Send button was disabled; nudged the box${btn.disabled ? " and it's STILL disabled, so the recipient probably isn't confirmed (see the recipient/typed screenshots)" : "; it's enabled now"}`); }
     trail.push(btn.found ? `Send button "${btn.label}" (found by ${btn.method})${btn.disabled ? ", still disabled" : ""}` : "no Send button found");
 
     if (!send) {
       await v.clearCompose();
-      return `DRY RUN OK, nothing sent. ${trail.join("; ")}. Screenshots: /api/voice-screenshot?step=recipient and ?step=typed.`;
+      return `DRY RUN OK, nothing sent. ${trail.join("; ")}. Screenshots: /api/voice-screenshot?step=suggest, ?step=recipient and ?step=typed.`;
     }
     if (!btn.found || btn.disabled) throw new Error(`the Send button ${btn.found ? "stayed disabled" : "wasn't found"}, so the text was not sent. (${trail.join("; ")})`);
 
