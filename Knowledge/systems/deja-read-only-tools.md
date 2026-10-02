@@ -90,6 +90,21 @@ browser. No project id is used; the API key alone resolves the project.
   edit pages by URL. Mechanics tested on a public Google page (type, click,
   wait, blocked step, missing control); **not yet tried on the real Business
   Profile** -- expect label-matching to need a round or two of adjustment.
+- **Security review 2026-10-01 (hardening PR):** (1) reachable pages are now
+  `business.google.com` plus `www.google.com/search` only (the saved login is
+  Bryce's main account, so Maps timeline/history etc. are out); (2) the edit
+  blocklist is broader (owner/manager/admin/invite/access/users/account/...)
+  and is also checked against the control that *actually matched*, not just
+  the text Deja asked for; (3) `/api/pending/decide` (Approve/Deny) refuses
+  cross-site requests (Origin / Sec-Fetch-Site), and the Browserbase sign-in
+  routes refuse cross-site subresource use -- a CSRF'd approval would bypass
+  the whole approval queue. Verified: the approval gate itself is sound
+  (`dispatchTool` has only two callers and the chat path checks
+  `APPROVAL_REQUIRED_TOOLS` first). Known residual risks: the approval card
+  shows the raw steps JSON, so read it; if `/login/done` is forgotten the
+  live-view link stays usable until the 15-minute timeout; a stray sign-in
+  session ended with `persist: true` could overwrite the saved login with a
+  logged-out one (only costs a re-sign-in).
 - **Tested 2026-10-01** (local workerd, traffic relayed because the session
   sandbox blocks workerd's direct egress): Context create, session create with
   a Context, raw-CDP WebSocket, navigate, text read, host allowlist rejection,
