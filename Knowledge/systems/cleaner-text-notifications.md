@@ -189,6 +189,12 @@ never sees a password.
   **clicks the suggestion** directly under it (never the dialer panel on the
   right) instead of pressing Enter. Either way the real proof is the Send
   button becoming enabled. New screenshot step `suggest`. Not yet re-run live.
+- **Search route first (Bryce, 2026-10-02):** from a screenshot of the cloud
+  browser's Voice page, the flow is now: click the **Search Google Voice** box,
+  type the number, click the matching number or the contact (e.g. Amy) in the
+  dropdown, which opens the thread, and only proceed if the thread header
+  shows the number. Fallbacks, in order: the cleaner's row in the left list,
+  then the new-message flow. Screenshot step `search`.
 - **Replies** land in Bryce's Google Voice, not in Hermes; he reads and
   answers them himself.
 - **Untested against live Google Voice when it shipped.** The page selectors

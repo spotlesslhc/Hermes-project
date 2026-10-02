@@ -897,18 +897,18 @@ async function openVoiceSession(env) {
     })(${JSON.stringify(digits)})`)) === true;
     // New-message flow: after typing the number, click the suggestion that shows
     // it, directly under the recipient box (never the dialer panel on the right).
-    const pickSuggestion = async (digits) => JSON.parse((await evalValue(`(function(digits){
+    const pickSuggestion = async (digits, name) => JSON.parse((await evalValue(`(function(digits, name){
       const a = document.activeElement; if (!a) return JSON.stringify({ clicked: false });
       const ar = a.getBoundingClientRect();
       const c = Array.from(document.querySelectorAll('*')).filter((el) => {
         const r = el.getBoundingClientRect(); const cx = r.left + r.width / 2; const cy = r.top + r.height / 2;
         return r.width > 40 && r.height > 15 && r.height < 90 && cy > ar.bottom - 5 && cy < ar.bottom + 380 && cx > ar.left - 40 && cx < ar.right + 40 && el !== a && !el.contains(a) && !['INPUT', 'TEXTAREA'].includes(el.tagName);
       }).map((el) => ({ el, text: (el.innerText || '').trim(), r: el.getBoundingClientRect() }))
-        .filter((x) => x.text.length < 120 && x.text.replace(/\\D/g, '').includes(digits))
+        .filter((x) => x.text.length < 120 && (x.text.replace(/\\D/g, '').includes(digits) || (name && x.text.split('\\n')[0].trim().toLowerCase() === name.toLowerCase())))
         .sort((a, b) => a.r.width * a.r.height - b.r.width * b.r.height);
       if (!c.length) return JSON.stringify({ clicked: false });
       const b = c[0]; return JSON.stringify({ clicked: true, label: b.text.split('\\n').join(' ').slice(0, 60), x: b.r.left + b.r.width / 2, y: b.r.top + b.r.height / 2 });
-    })(${JSON.stringify(digits)})`)) || "{}");
+    })(${JSON.stringify(digits)}, ${JSON.stringify(name || '')})`)) || "{}");
     const clickAt = async (x, y) => {
       for (const type of ["mousePressed", "mouseReleased"]) await cdp.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 }, sid);
     };
@@ -962,9 +962,30 @@ async function runVoiceCompose(env, { cleaner_name, message, send }) {
   let clickedSend = false;
   try {
     await v.shot("start");
-    // 1) Existing thread (reliable, and its header proves who it is).
+    // 0) Bryce's route (2026-10-02): the "Search Google Voice" box. Type the number,
+    // click the matching number or the contact in the dropdown, which opens the
+    // thread; the thread header must show the number before anything is typed.
     let viaThread = false;
-    const th = await v.openThread(cleaner_name, national);
+    if (await v.act("type", ["search google voice"], national)) {
+      await v.pause(2000);
+      await v.shot("search");
+      const hit = await v.pickSuggestion(national, cleaner_name);
+      if (hit.clicked) {
+        await v.clickAt(hit.x, hit.y);
+        await v.pause(2000);
+        if (await v.act("type", ["type a message", "message"], "")) {
+          viaThread = await v.headerHas(national);
+          trail.push(viaThread ? `searched the number and opened the thread via "${hit.label}" (header shows the number)` : `searched and clicked "${hit.label}" but the thread header didn't show the number`);
+        }
+      } else {
+        trail.push("searched the number but no matching result appeared in the dropdown");
+      }
+    } else {
+      trail.push("couldn't find the Search Google Voice box");
+    }
+
+    // 1) Existing thread row in the left list.
+    const th = viaThread ? { clicked: false } : await v.openThread(cleaner_name, national);
     if (th.clicked) {
       await v.clickAt(th.x, th.y);
       await v.pause(1800);
@@ -973,7 +994,7 @@ async function runVoiceCompose(env, { cleaner_name, message, send }) {
         trail.push(viaThread ? `opened the existing "${th.label}" thread (header shows the number)` : `clicked the "${th.label}" row but its header didn't show the number; using the new-message flow instead`);
       }
     }
-    // 2) New message: type the number and SELECT the suggestion so it becomes a real recipient.
+    // 2) Last resort, new message: type the number and SELECT the suggestion so it becomes a real recipient.
     if (!viaThread) {
       if (!(await v.act("click", ["send new message", "new message", "start a new conversation"]))) throw new Error("couldn't find the new-message button in Google Voice. Nothing was sent.");
       trail.push("opened new message");
@@ -1001,7 +1022,7 @@ async function runVoiceCompose(env, { cleaner_name, message, send }) {
 
     if (!send) {
       await v.clearCompose();
-      return `DRY RUN OK, nothing sent. ${trail.join("; ")}. Screenshots: /api/voice-screenshot?step=suggest, ?step=recipient and ?step=typed.`;
+      return `DRY RUN OK, nothing sent. ${trail.join("; ")}. Screenshots: /api/voice-screenshot?step=search, ?step=recipient and ?step=typed.`;
     }
     if (!btn.found || btn.disabled) throw new Error(`the Send button ${btn.found ? "stayed disabled" : "wasn't found"}, so the text was not sent. (${trail.join("; ")})`);
 
