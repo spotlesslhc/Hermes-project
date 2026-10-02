@@ -87,3 +87,16 @@ by this job. See [[zapier-automations]] and [[turno-scheduling]].
   flagged for hand-checking, not sent.
 - To reverse a date move: recreate the draft with the old date (old number
   and id are in the Activity log). A sent invoice can't be reversed.
+
+## Creating invoices from Deja (`create_wave_invoice`, added 2026-10-02)
+
+`createWaveInvoiceForClean` copies the customer and catalog item from the
+property's most recent earlier invoice (never creates Wave records; asks for
+`customer_name` if there's none), applies the standing discount, and creates a
+**DRAFT** dated on the clean date, so everything above (fact-check, 4pm
+approval) still governs sending. It refuses if an invoice for that property
+and date already exists. For a past clean Bryce already handled,
+`approve_without_sending` (dates before today only) approves it in Wave
+**without emailing** so `record_invoice_payment` can mark it paid; the 4pm job
+never touches non-drafts. No dashboard approval for creation (Bryce's call
+can change this by adding it to `APPROVAL_REQUIRED_TOOLS`).
