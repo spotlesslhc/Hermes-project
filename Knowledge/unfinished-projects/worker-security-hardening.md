@@ -22,13 +22,23 @@ verified from outside: no gap on either address.
 
 ## What's left
 
-1. **Access token check is log-only.** After a few quiet days, switch
-   `CF_ACCESS_MODE` to `"enforce"` (steps in [[worker-security-controls]]).
+1. **Access token check is log-only.** After a few quiet days (no "Access check
+   (log-only)" entries in the Activity log), switch `CF_ACCESS_MODE` to
+   `"enforce"` in `wrangler.jsonc` via a PR (steps in [[worker-security-controls]]).
 2. **Re-run the audit** (`/securitymaxxing:audit` on `src/index.js`) on the new
    `main` to confirm the findings are gone.
-3. **The three older open PRs** (#59, #60, #61) have unresolved review findings;
-   #60 conflicts with `main` and shouldn't merge as written.
-4. **Scope the GitHub token** the Worker uses to this repo only (manual, in
-   GitHub settings).
-5. When all of the above is done, fold anything lasting into
+3. **Scope the GitHub token** the Worker uses to this repo only (manual, GitHub
+   settings). Do **not** add branch protection on `main`: the Worker pushes
+   task files there.
+4. **Turn on GitHub secret scanning and push protection** (manual, repo settings).
+5. **Rotate the leaked keys** (manual): the Browserbase API key and the website's
+   `ADMIN_TOKEN` (see [[website-next-steps]]); the Zapier-stored Wave token is
+   tracked in [[wave-credential-rotation]]. Keep new values out of chats.
+6. **Delete the stray remote branch** `claude/fix-tool-call-history` on GitHub
+   (Claude's delete was refused).
+7. When all of the above is done, fold anything lasting into
    `Knowledge/systems/` and **delete this tracker** (see the README here).
+
+Done since the last update: the older PRs #59 (Google Business edit guard),
+#60 (`browse_web` limits) and #61 (Zelle alerts) were reworked and merged
+2026-10-02.

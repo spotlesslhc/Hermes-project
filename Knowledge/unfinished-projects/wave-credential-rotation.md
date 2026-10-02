@@ -2,7 +2,7 @@
 title: Wave credential rotation (two open items)
 tags: [security, wave]
 started: 2026-09-21
-updated: 2026-09-22
+updated: 2026-10-02
 ---
 
 # Wave credential rotation (two open items)
@@ -15,7 +15,8 @@ sessions — full detail lives in each decision note.
 
 ## What's done so far
 
-Both identified and documented, neither rotated yet:
+Both identified and documented. **Update 2026-10-02: Bryce reset the Client
+Secret and confirmed the Wave connection works.** Only the Zapier token remains:
 
 1. **Wave OAuth Client Secret** — possibly exposed on-screen during app
    setup on 2026-09-21. See
@@ -29,9 +30,7 @@ Both identified and documented, neither rotated yet:
 
 ## What's left
 
-Ask directly (don't assume done just because time has passed): has the
-Client Secret been reset? When Bryce is ready, rotate the Zapier token
-too (generate new in Wave, update the Zap's Code steps, revoke the old
+When Bryce is ready, rotate the Zapier token (generate new in Wave, update the Zap's Code steps, revoke the old
 one).
 
 ## Blocked on

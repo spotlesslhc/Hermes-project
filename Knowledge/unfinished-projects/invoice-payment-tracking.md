@@ -2,8 +2,8 @@
 title: Invoice payment tracking (reported cash/Zelle/Venmo done, hands-free auto-matching next)
 tags: [bookkeeper, wave, venmo, zelle]
 started: 2026-09-28
-updated: 2026-10-01
-status: reporting live; Zelle auto-matching via bank text alerts built (needs secret + phone forwarding + first real alert to tune); Venmo not started
+updated: 2026-10-02
+status: reporting live; Zelle bank-alert webhook merged and deployed (needs phone forwarding + first real alert to tune); Venmo not started
 ---
 
 # Invoice payment tracking (reported cash/Zelle/Venmo done, hands-free auto-matching next)
@@ -58,8 +58,12 @@ set aside: his bank sends no Zelle emails, so instead his phone forwards the
 bank's deposit **text alerts** to a Worker webhook. Design, setup steps and
 the open "tune the parser" item: [[systems/bank-text-alerts]].
 
-Left to do: Bryce creates `BANK_ALERT_SECRET` (the PR 61 build stays red until he does), sets up phone forwarding, and
-we adjust `parseBankAlert` against the first real alert. After a week of
+Merged 2026-10-02 (PR #61); `BANK_ALERT_SECRET` exists in the Secrets Store.
+Left to do: Bryce sets up phone forwarding (steps in the note above; optionally
+`BANK_ALERT_SENDERS` in `wrangler.jsonc` vars to accept only his bank's sending
+numbers), and we adjust `parseBankAlert` against the first real alert (send it
+with names and account details removed). **Also still open:** the invoice-timing
+work, whose Zapier part needs a browser session with Bryce. After a week of
 clean approvals, decide whether any matches can skip approval.
 
 ## Not started: Venmo

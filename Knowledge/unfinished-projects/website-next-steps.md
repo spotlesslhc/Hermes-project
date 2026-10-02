@@ -2,7 +2,7 @@
 title: spotlesslhc.com — open items and later projects
 tags: [website, cloudflare, reviews, seo]
 started: 2026-09-30
-updated: 2026-09-30
+updated: 2026-10-02
 ---
 
 # spotlesslhc.com: open items (saved for later)
@@ -55,3 +55,17 @@ name and hours, real reviews and photos) come out of it.
   unchecked; Bryce still to test the real quote submit.
 - **Move the site into `public/`** so the assets dir can't expose repo
   internals; do when Bryce isn't editing `index.html`.
+
+## Open from the 2026-10-01 audit follow-up
+
+- **Website PR #6** (`spotlesslhc-website`): structured data matching the Google
+  profile (hours 10 AM-8 PM, Facebook/Instagram `sameAs`). Open, **not merged**;
+  needs Bryce's go-ahead and a manual check of the Facebook and Instagram links.
+  Claude does not merge it unprompted.
+- **Lock the domain against email spoofing** (Bryce, in Cloudflare DNS): SPF
+  `v=spf1 -all`, DMARC `v=DMARC1; p=reject;`, and a null MX. Nobody uses an
+  `@spotlesslhc.com` address, so nothing legitimate breaks.
+- **Photos from the Google profile**: Bryce supplies 6-10 files (Claude cannot
+  fetch them); they go into the website repo. No reviews exist yet and none will
+  be invented.
+- Search Console / analytics (audit finding 7) still unconfirmed.
