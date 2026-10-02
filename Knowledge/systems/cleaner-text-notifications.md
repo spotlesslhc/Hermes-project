@@ -152,6 +152,23 @@ never sees a password.
   couldn't be inspected from the Claude Code session; run `check_text_status`
   for Amy (it shows the stored error for #cca68574 / #04a291eb) and
   `check_google_voice`, then tune the labels in `sendGoogleVoiceText`.
+- **Send step rewrite (2026-10-02, task "texts not sending"):** `check_text_status`
+  showed both approved link texts to Amy as UNCONFIRMED and Bryce saw nothing
+  in Voice, with login ruled out. Without live access the cause couldn't be
+  reproduced, so the send step was made stricter and self-documenting
+  (`runVoiceCompose`): it reads the compose box after typing (aborts if empty
+  or only partly filled, so long/newline/link texts can't half-enter), finds the
+  Send button by exact label nearest the compose box (the old substring
+  fallback `"send"` could click "Send new message" instead of Send), nudges the
+  box if Send is disabled (framework didn't register the inserted text), clicks,
+  and only reports success if the box emptied and the text is in the thread; a
+  message left in the box is reported as not sent. Screenshots of each step
+  (`start`, `recipient`, `typed`, `after_send`, `error`) are kept in KV for a
+  day and viewable at `/api/voice-screenshot?step=...` (behind Access).
+  **`test_voice_compose`** (no approval) runs the whole flow as a dry run that
+  never clicks Send, for diagnosing by eye; try a short plain message with no
+  links first, then the real one. If it still fails, the screenshots and the
+  controls list in the error say exactly where.
 - **Replies** land in Bryce's Google Voice, not in Hermes; he reads and
   answers them himself.
 - **Untested against live Google Voice when it shipped.** The page selectors

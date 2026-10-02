@@ -17,3 +17,12 @@ text_cleaner send step is failing silently. Bryce approved two texts to Amy (num
 Earlier attempts (#cca68574, #04a291eb) failed with "The page moved to workspace.google.com, which isn't allowed" because the Voice login had expired. Bryce has since re-logged in, and check_google_voice now passes (signed in, reachable), so login is no longer the cause.
 
 Things to investigate: (1) the send step may click Send before the message is typed or the compose box is populated, or the Send button may be a different element; (2) the long messages with URLs, or newlines, may not be entering the compose field correctly; (3) it may be opening a new-conversation flow by number instead of Amy's existing "Amy" thread (Aug 17 last message), and the message never submits; (4) check whether the click lands but the send fails silently in the Voice UI (e.g. a rate limit or link-blocking warning). Please reproduce with a short plain message with no links to Amy first, to separate the link/length cause from the flow cause. Ideally have the tool take a screenshot or read the compose box before and after clicking Send, and report that in the outcome so check_text_status is more diagnostic. Once fixed, tell Deja so she can re-queue Amy's two link texts (5 cleans: 206 Columbine Oct 5 and Oct 13, 3310 Arapaho Oct 6, 1795 Paloverde Oct 11, Unit 324 Oct 12).
+
+## Progress (2026-10-02, Claude Code)
+
+Send step rewritten and instrumented, plus a no-send dry run
+(`test_voice_compose`) and step screenshots; see [[cleaner-text-notifications]].
+The root cause could not be reproduced from the Claude Code session (no
+access to the live Worker or Voice), so this is **not confirmed fixed**: next
+step is Deja running `test_voice_compose` for Amy, then the two link texts.
+Re-open this if the dry run or a real text still fails.
