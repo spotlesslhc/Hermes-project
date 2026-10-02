@@ -27,6 +27,11 @@ updated: 2026-09-28
 > (`answerAdvanceAsk`), then to the paused text-approval batch. If nobody
 > else is available Bryce gets a plain alert instead.
 
+> **Deja-driven texting added 2026-10-02.** Separate from the paused daily
+> reminders above: the Scheduler can now text a cleaner itself, from Bryce's
+> Google Voice, via a Browserbase cloud browser (no kept-online Claude Code
+> session needed). See "Texting through Browserbase" at the bottom.
+
 Built 2026-09-27/28. Full build history and rejected alternatives (Twilio,
 Google-Voice-via-Deja-login) are in
 [[unfinished-projects/cleaner-sms-3week-notifications]] if ever needed —
@@ -98,3 +103,39 @@ path-scoped policy, which the bare `*.workers.dev` address can't do
   after 48h of silence (added 2026-09-29).
 - Not yet proven against a real end-to-end cycle (real cleaning → real
   Telegram approval → real staged text) — watch the first few live days.
+
+## Texting through Browserbase (2026-10-02)
+
+Why: Amy (iCloud, no Google Calendar app) never received her invite emails,
+so Bryce wanted the scheduling agent to text her instead. This is *not* the
+rejected "Deja logs into Google Voice with stored credentials" idea — Bryce
+signs in once himself in a Browserbase live view and the login is kept as a
+Browserbase Context (same pattern as the Google Business tools); the Worker
+never sees a password.
+
+- **One-time setup:** open `/api/browserbase/voice-login`, sign in to Google
+  Voice in the window that opens (use the Google account that owns his
+  Voice number), then open `/api/browserbase/voice-login/done`. Ask Deja to
+  run `check_google_voice` to confirm. If Google challenges the cloud
+  browser or the login expires, redo it.
+- **Numbers:** `set_cleaner_phone` (Deja, no approval) saves a roster
+  cleaner's number in KV `cleaner_phones`. Only roster cleaners with a saved
+  number can ever be texted — never an arbitrary number.
+- **Sending:** `text_cleaner` (custom text) and `text_cleaner_schedule` (a
+  standard list of a cleaner's next 14 days: property, day, time only; no door
+  codes or customer details). Both end in a **dashboard approval** showing the
+  exact recipient and message (`text_cleaner` is in `APPROVAL_REQUIRED_TOOLS`;
+  the schedule tool also sends a Telegram nudge). On approval
+  `sendGoogleVoiceText` drives voice.google.com: new message → recipient →
+  Enter → checks the number's last 4 digits appear → types the message →
+  clicks Send → checks the text appears in the thread. Any failure before the
+  Send click sends nothing; only `voice.google.com` is ever opened.
+- **Replies** land in Bryce's Google Voice, not in Hermes; he reads and
+  answers them himself.
+- **Untested against live Google Voice when it shipped.** The page selectors
+  (labels like "Send new message", "Type a message", "Send message") are
+  best guesses at Google Voice's current labels. Expect to tune them on the
+  first real attempt: the first text is approved by Bryce, and a failure
+  before Send is harmless. The Activity log records each attempt.
+- The paused 3-week reminder system could be switched to use this instead of
+  the staged-text/Claude Code route if Bryce wants it resumed.
