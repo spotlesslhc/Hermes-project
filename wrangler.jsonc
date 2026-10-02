@@ -107,7 +107,7 @@
   ],
   // Optional: have the Worker itself verify the Cloudflare Access token on every
   // non-webhook request (defense in depth if an address is ever left uncovered
-  // by Access). Add these under "vars" below. Start with "log" and check the
+  // by Access). The values are set under "vars" below. Start with "log" and check the
   // Activity log stays quiet for a few days before switching to "enforce".
   //   "CF_ACCESS_TEAM_DOMAIN": "yourteam.cloudflareaccess.com",
   //   "CF_ACCESS_AUD": "<Access application AUD tag>[,<second app's AUD tag>]",
@@ -120,7 +120,15 @@
     // Not secret (just ids) -- the Spotless Cleaning Facebook Page and its
     // linked Instagram Business account, used by runWeeklySocialDigest.
     "META_PAGE_ID": "1347130178484829",
-    "META_IG_BUSINESS_ID": "17841476769091300"
+    "META_IG_BUSINESS_ID": "17841476769091300",
+    // Cloudflare Access token check (see the comment above "vars"). LOG-ONLY:
+    // failures are recorded in the Activity log, nothing is blocked. Two AUD
+    // tags: the "Hermes dashboard" app (workers.dev + preview URLs) and the
+    // "hermes" app (hermes.spotlesslhc.com). These are identifiers, not secrets.
+    // To enforce, change the mode to "enforce" only after a few quiet days.
+    "CF_ACCESS_TEAM_DOMAIN": "plain-poetry-7846.cloudflareaccess.com",
+    "CF_ACCESS_AUD": "44d2894dfe4714040819d5c0eea74afb6f08093b23d152633b7130f0216f6a8d,86073ad5df31c26420459504bc2818932ab2446808326951671f88819c63d449",
+    "CF_ACCESS_MODE": "log"
   },
   "triggers": {
     // Every Monday at 8am America/Phoenix (UTC-7 year-round, no DST) --
