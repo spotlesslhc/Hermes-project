@@ -33,8 +33,14 @@ by this job. See [[zapier-automations]] and [[turno-scheduling]].
    a re-booked date is safe.
 4. **Amount check**: every line must be billed at its catalog item's standard
    rate in Wave (`item.price` vs `product.unitPrice`), and the total can't be
-   $0. A different price (discount, typo, rate change) is held as a problem,
-   not sent; Bryce either fixes the draft in Wave or sends it himself. Date
+   $0. The invoice total must also equal the lines minus the property's
+   **standing discount** (`DEFAULT_INVOICE_DISCOUNTS` / KV `invoice_discounts`,
+   set by Deja's `set_invoice_discount`; currently 1885 E Birkdale Ln = 10%,
+   i.e. 7% family friend + 3% cash entered as one discount in Wave's
+   separate discount field). Any other difference (one-off discount, typo,
+   rate change, tax) is held as a problem, not sent; Bryce fixes the draft
+   in Wave or sends it himself. The check runs before any date fix so a
+   recreated draft can't silently drop a one-off discount. Date
    fixes preserve the original line price.
 5. **Anything else is a problem**, never auto-fixed or sent: no clean on that
    date and no recorded move (maybe cancelled), duplicate drafts for the same
@@ -63,8 +69,11 @@ by this job. See [[zapier-automations]] and [[turno-scheduling]].
 - Zapier's cancelled-reservation paths (A-C) create invoices for cancelled
   reservations, likely cancellation fees; if one of those lands as a draft
   with no clean on its date, it shows as a mismatch for Bryce, not deleted.
-- A deliberately discounted invoice is held by the amount check; fix it to
-  the standard rate or send it by hand.
+- A one-off discounted invoice is held by the amount check; fix it or send
+  it by hand. Taxed invoices would also be held (total ≠ lines).
+- Recreated drafts (date fixes) re-apply a standing discount through
+  `invoiceCreate`'s `discounts` input, written from the published schema and
+  untested; if it fails the draft is left as-is and flagged.
 - `price`/`unitPrice` Wave field names are from the published schema and
   untested live; if the audit query errors, check those first.
 - **Moves made by hand in Google Calendar aren't in the move log**, only
