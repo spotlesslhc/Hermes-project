@@ -18,7 +18,7 @@ that gets built, not after. Rather than bolt safety onto each new risky
 tool one at a time, this is a reusable framework: any future tool that's
 genuinely risky or hard to reverse gets gated through the same mechanism.
 
-**Nothing is gated today.** Hermes' three real tools don't need it:
+**When this was first built nothing was gated** (see "Currently gated" below for today's list). Hermes' three real tools don't need it:
 `propose_site_edit` already has its own review gate (opens a GitHub PR,
 Bryce reviews before anything merges — see [[site-editor]]),
 `record_monthly_finance` is Bryce reporting his own numbers back to
@@ -27,7 +27,7 @@ up, not something retrofitted onto what exists.
 
 ## How it works
 
-1. A tool gets added to `APPROVAL_REQUIRED_TOOLS` (currently empty) in
+1. A tool gets added to `APPROVAL_REQUIRED_TOOLS` (see the constant in `src/index.js` for the live list) in
    `src/index.js`.
 2. When Claude calls that tool, instead of running it, the Worker writes a
    `pending:<uuid>` record to `HERMES_KV` (status `pending`) and tells
@@ -66,3 +66,34 @@ only registers when the plain `HERMES_DEBUG_TOOLS` var is `"true"` — always
 on `wrangler dev`. It exists so the whole pending → dashboard → approve/
 deny → execute loop can be re-verified end to end in the future without
 needing a real risky tool to exist yet.
+
+## Currently gated (always)
+
+`cancel_turno_clean`, `edit_google_business`, `reschedule_clean`,
+`cancel_clean`, `send_wave_invoices`, `text_cleaner`, `set_cleaner_phone`.
+The live list is `APPROVAL_REQUIRED_TOOLS` in `src/index.js`.
+
+## Taint gate: outside text can't trigger actions (2026-10-02)
+
+Email bodies, web pages, Google Business pages and Google Voice message lists
+are written by people outside the business. The system prompt tells Deja to
+treat them as untrusted, but a prompt is not a control, so the code enforces
+it: once a conversation has run `search_gmail`, `read_email`, `fetch_site`,
+`browse_google_business`, `check_text_status` or `check_google_voice`, **every
+tool that is not plainly read-only is sent to this approval queue instead of
+running**, with the reason "Deja read email or web content earlier in this
+conversation" on the card.
+
+- Applies to the whole conversation, including earlier turns replayed from the
+  dashboard (the replay carries the tool calls; see [[deja-memory]]). If the
+  replayed history can't be trusted to carry them, or a client sends plain
+  text only, the gate assumes the worst.
+- **Fails closed:** a new tool is gated after outside text until someone adds
+  it to `TAINT_SAFE_TOOLS` on purpose.
+- Everyday use is unchanged: a conversation that never touches email or web
+  content runs un-gated tools exactly as before. The cost is one extra approval
+  click when Bryce mixes reading mail with an action in the same chat.
+- Not covered: calendar event text (it comes through the reservation
+  automations) is not treated as outside text, because gating every cleaner
+  assignment after listing the schedule would make the tool unusable.
+

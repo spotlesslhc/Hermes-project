@@ -90,10 +90,9 @@ browser. No project id is used; the API key alone resolves the project.
   edit pages by URL. Mechanics tested on a public Google page (type, click,
   wait, blocked step, missing control); **not yet tried on the real Business
   Profile** -- expect label-matching to need a round or two of adjustment.
-- **Security review 2026-10-01 (hardening PR):** (1) reachable pages were narrowed
-  to `business.google.com` plus `www.google.com/search` -- later widened again
-  to any `www.google.com` page at Bryce's request (see browse_web below; mail,
-  drive and myaccount are still out); (2) the edit
+- **Security review 2026-10-01 (hardening PR):** (1) reachable pages are now
+  `business.google.com` plus `www.google.com/search` only (the saved login is
+  Bryce's main account, so Maps timeline/history etc. are out); (2) the edit
   blocklist is broader (owner/manager/admin/invite/access/users/account/...)
   and is also checked against the control that *actually matched*, not just
   the text Deja asked for; (3) `/api/pending/decide` (Approve/Deny) refuses
@@ -106,16 +105,6 @@ browser. No project id is used; the API key alone resolves the project.
   live-view link stays usable until the 15-minute timeout; a stray sign-in
   session ended with `persist: true` could overwrite the saved login with a
   logged-out one (only costs a re-sign-in).
-- **`browse_web` (other sites, added 2026-10-01):** Bryce wants Deja to be able
-  to visit sites beyond Google, but only with his say-so. Read-only (text +
-  links), runs in a **separate Browserbase session with no saved login**, https
-  public hostnames only (no IPs, localhost, embedded credentials). The gate is
-  enforced server-side in the chat loop, not by the model: it runs immediately
-  only if Bryce's *current message* names the site (`userNamedUrl`: exact
-  hostname match, and any `?query` must also be in his message so a URL can't
-  smuggle data out); otherwise it's queued as a pending action for
-  Approve/Deny on the dashboard. Page content is untrusted and Deja is told
-  never to follow a URL a page suggests. Approving a queued visit runs it.
 - **Tested 2026-10-01** (local workerd, traffic relayed because the session
   sandbox blocks workerd's direct egress): Context create, session create with
   a Context, raw-CDP WebSocket, navigate, text read, host allowlist rejection,
@@ -127,3 +116,29 @@ browser. No project id is used; the API key alone resolves the project.
   Venmo, and Zelle logins stay out of any cloud browser.
 
 See [[unfinished-projects/google-business-profile]].
+
+## `browse_web`: other sites, with no login (2026-10-02)
+
+Bryce wants Deja to be able to look things up on other sites, including Google
+searches, but only on his say-so. Opening more of Google in the **signed-in**
+session was considered and rejected (that account is Bryce's main one, so Maps
+history, account pages and redirectors are out of bounds); `browse_web` covers the
+need instead because it uses a **separate Browserbase session with no saved
+login**, so there is no personal data for a page to reach.
+
+- Read-only (text and links). https public hostnames only: no IP addresses,
+  single-label or internal names, ports, embedded credentials, or names that
+  embed an IP (the nip.io style).
+- **What runs without approval is deliberately tiny**, enforced in code in the
+  chat loop (`browseWebNeedsNoApproval`), because the URL itself can carry data
+  out: only the *front page* of a site Bryce named in his own message (an email
+  address or part of a longer name doesn't count), or a Google search whose words
+  appear in his message. Anything else (a path, a query, a link found on a page)
+  waits on the dashboard with the exact URL on the card.
+- Also gated after the conversation has read email or web content (see
+  [[approval-queue]], taint gate), and capped at 3 pages per request.
+- Where a page ends up after redirects is re-checked and nothing is read from a
+  place `browse_web` wouldn't have opened. Links are limited to valid public
+  URLs (15 max) and are untrusted.
+- Residual: a page can run script in that logged-out session before the redirect
+  check; there is nothing in it to steal.

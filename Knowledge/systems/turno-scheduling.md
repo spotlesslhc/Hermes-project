@@ -72,6 +72,18 @@ just fire a one-way webhook.
   `APPROVAL_REQUIRED_TOOLS` — it waits for Bryce's dashboard approval.
   KV keys per reservation: `turno_event:`, `turno_invoice:`,
   `turno_clean_date:` (by code) and `turno_date:` (by date).
+- **Rescheduling a clean** (`rescheduleClean`, Deja's `reschedule_clean`
+  tool, labelled Scheduler; added 2026-10-01): moves one Cleans event
+  (property + current date + new date) keeping its time window and
+  attendees. Invited cleaners are emailed the change (`sendUpdates=all`),
+  so it is in `APPROVAL_REQUIRED_TOOLS` — waits for Bryce's dashboard
+  approval. For Sahara it also moves the `turno_date:`/`turno_clean_date:`
+  keys. It does **not** edit Wave invoice dates (no verified mutation); the
+  result tells Bryce to check the invoice by hand. Reverse by moving it back;
+  to change who's invited afterward, use `assign_cleaner`.
+  Every move is also written to the KV `clean_moves` log, which the
+  Bookkeeper's 4pm invoice check uses to fix draft invoice dates — see
+  [[invoice-sending]].
 - Google Calendar OAuth (`handleGoogleCalendarLogin/Callback`,
   `getGoogleCalendarAccessToken`) — one-time-authorize, refresh-token-in-
   KV pattern, same as [[spotify-control]]. "Connect Calendar (Turno)"

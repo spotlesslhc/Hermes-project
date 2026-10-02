@@ -1,0 +1,7 @@
+{
+  "name": "securitymaxxing",
+  "version": "0.2.1",
+  "description": "Evidence-based application security audits (OWASP Top 10, API Top 10, LLM Top 10) with file:line proof and patches.",
+  "author": { "name": "Kenji Tubera" },
+  "license": "Apache-2.0"
+}
