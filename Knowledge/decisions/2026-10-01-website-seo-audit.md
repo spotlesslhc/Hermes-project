@@ -114,3 +114,23 @@ domain was verified with Google; Search Console status is still unconfirmed.
 
 Nothing above is an implementation approval. Any site change goes on a
 branch and PR in `spotlesslhc/spotlesslhc-website`; Bryce merges.
+
+## Decisions and follow-up (Bryce, 2026-10-01)
+
+- **Google Business Profile is the source of truth** for name, hours and
+  profile facts (finding 5 resolved). Site structured data updated to match:
+  hours 10 AM-8 PM daily, Facebook/Instagram `sameAs`, the profile name as
+  `alternateName` (the visible name stays "Spotless Cleaning"). Website PR:
+  `spotlesslhc/spotlesslhc-website#6`, **open, not merged** (merging
+  publishes the site).
+- **Nobody uses an `@spotlesslhc.com` email**, so the domain is to be locked
+  against spoofing: SPF `v=spf1 -all`, DMARC `v=DMARC1; p=reject;`, and a
+  null MX. Records are added by Bryce in Cloudflare DNS (Claude has no
+  Cloudflare access). Status: pending until Bryce confirms.
+- **No reviews exist yet**; none will be invented. The reviews section stays
+  empty until real ones arrive.
+- **Photos:** to come from the Google profile. Claude can't fetch them
+  (Google shows a bot check to automated visitors, which we do not bypass),
+  so Bryce supplies the files from the profile or his `GBP-upload` folder.
+- Still waiting: invoice timing (task #3, needs a browser session with
+  Bryce) and the ElevenLabs credit reset.
