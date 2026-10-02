@@ -43,6 +43,15 @@ separate assignment mechanism.
 
 ## How it works
 
+**Changed 2026-10-02:** steps 1-4 below describe the original Zap-based
+design. `assignCleaner` now reads the Cleans calendar itself (the Worker's own
+Google connection, as the Turno automation does) and invites the cleaner to the
+soonest *unassigned* clean matching the property (street number, nickname or
+location; optional `date`), so it works for any clean on the calendar,
+including hand-made and `create_clean_event` ones, and warns if the cleaner is
+already on another clean that day. The old Zap ("Assign Cleaner to Turnover
+(Hermes)") is no longer called and can be left or turned off.
+
 1. Hermes calls the `assign_cleaner` tool (in `src/index.js`) with a
    property and a cleaner name.
 2. `assignCleaner()` looks up the most recent unassigned reservation for

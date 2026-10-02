@@ -29,17 +29,12 @@ Bryce also has a coding assistant, Claude Code, running in a terminal on his com
 // event as a guest — they accept or decline the invite, and a decline means
 // trying the next cleaner. This mirrors that directly rather than inventing
 // a separate assignment system: assign_cleaner adds the chosen cleaner as an
-// attendee on the matching event via a dedicated Zap ("Assign Cleaner to
-// Turnover (Hermes)"), reusing Zapier's already-authenticated Google
-// Calendar connection instead of Hermes needing its own Google credentials.
+// attendee on the matching Cleans calendar event directly through the Worker's
+// own Google connection (changed 2026-10-02; it used to go through a dedicated
+// Zap and the `reservations` KV list, which couldn't see hand-made cleans).
+// Matching is by street number or nickname -- Bryce's calendar titles use
+// different abbreviations than Hospitable's address format.
 // See Knowledge/systems/scheduler.md for how this was built and why.
-//
-// The Zap finds the event by street number (not the full address — Bryce's
-// calendar event titles use different abbreviations than Hospitable's
-// address format, e.g. "1795 Paloverde Blvd South" vs "1795 Palo Verde
-// Boulevard South", but the street number is always consistent) plus the
-// checkout date.
-const ASSIGN_CLEANER_WEBHOOK = "https://hooks.zapier.com/hooks/catch/28466122/4dnv37u/";
 
 // Bryce's active cleaners: name (as he'd say it) -> the email he invites them
 // on. Stored as a KV-overridable default so this can be updated without a
@@ -74,57 +69,95 @@ async function getReservations(env) {
   return raw ? JSON.parse(raw) : [];
 }
 
-async function assignCleaner(env, { property, cleaner_name }) {
+// Invites a cleaner to an unassigned clean on the Cleans calendar. Reads the
+// calendar itself (same Google connection the Turno automation uses) rather
+// than the `reservations` KV list + Zapier webhook it used to depend on, so it
+// works for ANY clean on the calendar, including ones Bryce or
+// create_clean_event made by hand. Matches by street number, nickname
+// (DEFAULT_PROPERTY_NICKNAMES) or a location containing the number, so an
+// event titled just "Ryan" still matches.
+async function assignCleaner(env, { property, cleaner_name, date }) {
   const roster = await getCleanerRoster(env);
   const cleanerEmail = roster[cleaner_name.trim().toLowerCase()];
   if (!cleanerEmail) {
     const known = Object.keys(roster).join(", ") || "(none configured)";
     throw new Error(`Unknown cleaner "${cleaner_name}". Known cleaners: ${known}.`);
   }
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("date must be YYYY-MM-DD");
 
-  const streetNumber = (property.match(/\d+/) || [])[0];
-  if (!streetNumber) throw new Error(`Couldn't find a street number in "${property}" to match against the calendar.`);
+  const number = await resolveStreetNumber(env, property);
+  const rawNicks = await env.HERMES_KV.get("property_nicknames");
+  const nicknames = Object.entries(rawNicks ? JSON.parse(rawNicks) : DEFAULT_PROPERTY_NICKNAMES)
+    .filter(([, n]) => n === number).map(([nick]) => nick);
+  const matchesProperty = (e) => {
+    const text = `${e.summary || ""} ${e.location || ""}`.toLowerCase();
+    return text.includes(number) || nicknames.some((n) => text.includes(n));
+  };
 
-  const reservations = await getReservations(env);
-  const match = reservations
-    .filter((r) => !r.assigned && r.property && r.property.includes(streetNumber))
-    .sort((a, b) => (a.checkout || "").localeCompare(b.checkout || ""))[0];
-  if (!match) throw new Error(`No unassigned reservation found for a property matching "${property}".`);
-
-  const res = await fetch(ASSIGN_CLEANER_WEBHOOK, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      street_number: streetNumber,
-      event_date: (match.checkout || "").slice(0, 10),
-      cleaner_email: cleanerEmail,
-      property_name: match.property
-    })
+  const calendarId = await getCleansCalendarId(env);
+  const start = new Date(`${phoenixToday()}T00:00:00-07:00`);
+  const params = new URLSearchParams({
+    timeMin: start.toISOString(),
+    timeMax: addDays(start, 90).toISOString(),
+    singleEvents: "true",
+    orderBy: "startTime",
+    maxResults: "250"
   });
-  if (!res.ok) throw new Error(`Assignment webhook failed: ${res.status} ${await res.text()}`);
+  const data = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events?${params}`);
+  const cleanerEmails = new Set(Object.values(roster));
+  const isStaffed = (e) => (e.attendees || []).some((a) => cleanerEmails.has(a.email) && a.responseStatus !== "declined");
+  const dateOf = (e) => (e.start?.dateTime || e.start?.date || "").slice(0, 10);
 
-  match.assigned = true;
-  match.assignedTo = cleaner_name;
-  await env.HERMES_KV.put("reservations", JSON.stringify(reservations.slice(-500)));
+  const forProperty = (data.items || []).filter((e) => e.status !== "cancelled" && matchesProperty(e) && (!date || dateOf(e) === date));
+  const unassigned = forProperty.filter((e) => !isStaffed(e));
+  if (!unassigned.length) {
+    const why = forProperty.length
+      ? `every matching clean already has a cleaner invited (${forProperty.map((e) => `${dateOf(e)}`).join(", ")})`
+      : `no clean for "${property}"${date ? ` on ${date}` : ""} found on the Cleans calendar in the next 90 days`;
+    throw new Error(`Nothing to assign: ${why}.`);
+  }
+  const event = unassigned[0];
+  const eventDate = dateOf(event);
 
-  const status = await getStatusOrDefault(env);
-  const scheduler = status.scheduler || {};
+  await inviteCleanerToEvent(env, calendarId, event, cleanerEmail);
+  await env.HERMES_KV.put(`cleaning_invited:${event.id}:${cleanerEmail}`, String(Date.now()));
+
+  let busyNote = "";
+  try {
+    const others = await listCleansEventsForDay(env, calendarId, eventDate);
+    if (others.some((e) => e.id !== event.id && (e.attendees || []).some((a) => a.email === cleanerEmail && a.responseStatus !== "declined"))) {
+      busyNote = ` Heads up: ${cleaner_name} is already on another clean that day.`;
+    }
+  } catch { /* the heads-up is optional */ }
+
+  // Keep the Scheduler card's unassigned count honest if this clean also came
+  // in as a reservation (webhook list); calendar-only cleans just skip this.
+  const reservations = await getReservations(env);
+  const match = reservations.find((r) => !r.assigned && r.property && r.property.includes(number) && (r.checkout || "").slice(0, 10) === eventDate);
+  if (match) {
+    match.assigned = true;
+    match.assignedTo = cleaner_name;
+    await env.HERMES_KV.put("reservations", JSON.stringify(reservations.slice(-500)));
+  }
   const stillUnassigned = reservations.filter((r) => !r.assigned).length;
+  const status = await getStatusOrDefault(env);
   await setStatus(env, {
     scheduler: {
-      ...scheduler,
+      ...(status.scheduler || {}),
       status: stillUnassigned > 0 ? "attn" : "running",
       label: stillUnassigned > 0 ? "Needs review" : "Running",
       unassigned: stillUnassigned
     }
   });
 
-  await appendLog(env, {
-    who: "Scheduler",
-    what: `Invited ${cleaner_name} to ${match.property} (checkout ${match.checkout || "TBD"})`
-  });
+  await appendLog(env, { who: "Scheduler", what: `Invited ${cleaner_name} to ${event.summary} on ${eventDate} (calendar invite sent)` });
+  return { cleanerEmail, property: event.summary, checkout: eventDate, busyNote };
+}
 
-  return { cleanerEmail, property: match.property, checkout: match.checkout };
+async function listCleansEventsForDay(env, calendarId, dateOnly) {
+  const params = new URLSearchParams({ timeMin: `${dateOnly}T00:00:00-07:00`, timeMax: `${dateOnly}T23:59:59-07:00`, singleEvents: "true", maxResults: "250" });
+  const data = await googleCalendarApi(env, `/calendars/${encodeURIComponent(calendarId)}/events?${params}`);
+  return (data.items || []).filter((e) => e.status !== "cancelled");
 }
 
 // ---- Spotify: playback control --------------------------------------------
@@ -3204,7 +3237,7 @@ async function dispatchTool(env, name, input) {
   }
   if (name === "assign_cleaner") {
     const result = await assignCleaner(env, input);
-    return `Invited ${input.cleaner_name} (${result.cleanerEmail}) to the ${result.property} turnover, checkout ${result.checkout || "TBD"}. Tell Bryce it's sent, not confirmed — the cleaner still has to accept the invite.`;
+    return `Invited ${input.cleaner_name} (${result.cleanerEmail}) to the ${result.property} turnover, checkout ${result.checkout || "TBD"}. Tell Bryce it's sent, not confirmed — the cleaner still has to accept the invite.${result.busyNote || ""}`;
   }
   if (name === "list_upcoming_cleanings") {
     return JSON.stringify(await getUpcomingCleaningStatus(env, input.lookahead_days || 7));
@@ -3611,12 +3644,13 @@ async function handleAsk(request, env) {
   });
   tools.push({
     name: "assign_cleaner",
-    description: "Assign a cleaner to an unassigned turnover by inviting them to the job's Google Calendar event, the same way Bryce does it himself — the cleaner then accepts or declines the invite. No approval needed; this is Scheduler's core job. If the cleaner later declines, call this again with the next cleaner to try. Runs automatically, so make sure the property matches a real unassigned reservation before calling — check current status first if unsure.",
+    description: "Assign a cleaner to an unassigned clean on the Cleans calendar (any clean on it, including ones made by hand or by create_clean_event) by inviting them to the job's Google Calendar event, the same way Bryce does it himself — the cleaner then accepts or declines the invite. No approval needed; this is Scheduler's core job. If the cleaner later declines, call this again with the next cleaner to try. Runs automatically, so make sure the property matches a real unassigned reservation before calling — check current status first if unsure.",
     input_schema: {
       type: "object",
       properties: {
         property: { type: "string", description: "The property address or a distinctive part of it, e.g. \"1795 Palo Verde\" or \"206 Columbine Drive\" — only needs to contain the street number." },
-        cleaner_name: { type: "string", description: "The cleaner's first name as Bryce would say it, e.g. \"Amy\" or \"Ashley\". Must match a name in the current roster." }
+        cleaner_name: { type: "string", description: "The cleaner's first name as Bryce would say it, e.g. \"Amy\" or \"Ashley\". Must match a name in the current roster." },
+        date: { type: "string", description: "Optional YYYY-MM-DD of the clean, when the property has more than one unassigned clean coming up. Defaults to the soonest unassigned one." }
       },
       required: ["property", "cleaner_name"]
     }
