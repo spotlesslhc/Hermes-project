@@ -130,6 +130,13 @@ never sees a password.
   Enter → checks the number's last 4 digits appear → types the message →
   clicks Send → checks the text appears in the thread. Any failure before the
   Send click sends nothing; only `voice.google.com` is ever opened.
+- **Invite links:** `get_clean_invite_links` (read-only) returns a cleaner's
+  upcoming cleans with each event's Google Calendar `htmlLink`, so Deja can
+  paste links into `text_cleaner`. Property, date, time, response and link only;
+  never descriptions (door codes, customer contacts). 600-character limit per
+  text, so she splits long lists. The link opens the event for someone signed
+  in to Google with the invited address, so a texted link may not work for an
+  iCloud-only cleaner like Amy; the text should also say the property and day.
 - **Replies** land in Bryce's Google Voice, not in Hermes; he reads and
   answers them himself.
 - **Untested against live Google Voice when it shipped.** The page selectors
