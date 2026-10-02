@@ -846,20 +846,28 @@ async function openVoiceSession(env) {
       } catch { return false; }
     };
     const composeText = async () => String(await evalValue(`(function(){ const el = document.activeElement; if (!el) return ""; return (el.value !== undefined ? el.value : el.innerText) || ""; })()`));
-    // The Send button: an exact "Send"-type label nearest the focused compose box.
-    // Never a substring match, which could hit "Send new message".
+    // The Send button. In Google Voice it's an icon-only paper plane at the right
+    // end of the compose box (no visible "Send" text), so: first any button whose
+    // label is exactly Send / Send message (never a substring, which could hit
+    // "Send new message"); otherwise the button sitting on the compose box's row
+    // just to its right (not the attach-image button on the left, and not the
+    // keypad panel further right).
     const findSend = async () => JSON.parse((await evalValue(`(function(){
       const anchor = document.activeElement; const ar = anchor ? anchor.getBoundingClientRect() : null;
       const want = /^send( message| sms| text)?$/i;
       const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-      const c = Array.from(document.querySelectorAll('button, [role="button"]')).filter(vis)
-        .map((el) => ({ el, label: ((el.getAttribute('aria-label') || el.getAttribute('title') || el.innerText || '') + '').trim() }))
-        .filter((x) => want.test(x.label));
-      if (!c.length) return JSON.stringify({ found: false });
-      const dist = (x) => { const r = x.el.getBoundingClientRect(); return ar ? Math.hypot(r.left + r.width / 2 - (ar.left + ar.width / 2), r.top + r.height / 2 - (ar.top + ar.height / 2)) : 0; };
-      c.sort((a, b) => dist(a) - dist(b));
-      const b = c[0]; const r = b.el.getBoundingClientRect();
-      return JSON.stringify({ found: true, label: b.label, disabled: !!(b.el.disabled || b.el.getAttribute('aria-disabled') === 'true'), x: r.left + r.width / 2, y: r.top + r.height / 2, matches: c.length });
+      const all = Array.from(document.querySelectorAll('button, [role="button"]')).filter(vis)
+        .map((el) => ({ el, r: el.getBoundingClientRect(), label: ((el.getAttribute('aria-label') || el.getAttribute('title') || el.innerText || '') + '').trim() }));
+      const pack = (x, method) => ({ found: true, method, label: x.label || '(icon, no label)', disabled: !!(x.el.disabled || x.el.getAttribute('aria-disabled') === 'true'), x: x.r.left + x.r.width / 2, y: x.r.top + x.r.height / 2 });
+      const dist = (x) => ar ? Math.hypot(x.r.left + x.r.width / 2 - (ar.left + ar.width / 2), x.r.top + x.r.height / 2 - (ar.top + ar.height / 2)) : 0;
+      const labelled = all.filter((x) => want.test(x.label)).sort((a, b) => dist(a) - dist(b));
+      if (labelled.length) return JSON.stringify(pack(labelled[0], 'label'));
+      if (!ar) return JSON.stringify({ found: false });
+      const row = all.filter((x) => {
+        const cy = x.r.top + x.r.height / 2; const cx = x.r.left + x.r.width / 2;
+        return cy > ar.top - 30 && cy < ar.bottom + 30 && cx > ar.left + ar.width / 2 && cx < ar.right + 90 && x.r.width < 80;
+      }).sort((a, b) => dist(a) - dist(b));
+      return JSON.stringify(row.length ? pack(row[0], 'position') : { found: false });
     })()`)) || "{}");
     const clickAt = async (x, y) => {
       for (const type of ["mousePressed", "mouseReleased"]) await cdp.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 }, sid);
@@ -932,7 +940,7 @@ async function runVoiceCompose(env, { cleaner_name, message, send }) {
 
     let btn = await v.findSend();
     if (btn.found && btn.disabled) { await v.nudgeInput(); btn = await v.findSend(); trail.push("Send button was disabled; nudged the box"); }
-    trail.push(btn.found ? `Send button "${btn.label}"${btn.disabled ? " (still disabled)" : ""}, ${btn.matches} match(es)` : "no Send button found");
+    trail.push(btn.found ? `Send button "${btn.label}" (found by ${btn.method})${btn.disabled ? ", still disabled" : ""}` : "no Send button found");
 
     if (!send) {
       await v.clearCompose();
