@@ -13,6 +13,15 @@ approval, Google Voice staging) is built and documented as a real system
 in [[systems/cleaner-text-notifications]] — read that first for how it
 actually works. This file only tracks what's still open.
 
+## Update 2026-10-02
+
+Deja can now text cleaners herself from Bryce's Google Voice through a
+Browserbase cloud browser (approval-gated, one text at a time); proven live
+with Amy's cleaning-invite links. That's the working method for invites; see
+[[systems/cleaner-text-notifications]] ("Established method"). The 3-week
+reminder automation below is still paused and could be rebuilt on this route
+instead of the staged-text/Claude Code one.
+
 ## What's left
 
 1. **First real end-to-end proof.** Every piece has been tested
