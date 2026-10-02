@@ -3333,10 +3333,27 @@ async function getPendingAction(env, id) {
   return raw ? JSON.parse(raw) : null;
 }
 
+// KV has no compare-and-set, so claim the action with a unique token and read it
+// back: if another request wrote its token in between, only the one whose token
+// survived goes on. This closes the race for requests that overlap in time,
+// which is the realistic case (double click, two open tabs, a retry).
+async function claimPendingAction(env, id) {
+  const key = `pending_claim:${id}`;
+  if (await env.HERMES_KV.get(key)) return false;
+  const token = crypto.randomUUID();
+  await env.HERMES_KV.put(key, token, { expirationTtl: 3600 });
+  return (await env.HERMES_KV.get(key)) === token;
+}
+
 async function resolvePendingAction(env, id, decision) {
   const record = await getPendingAction(env, id);
   if (!record) { const err = new Error("Pending action not found"); err.status = 404; throw err; }
   if (record.status !== "pending") throw new Error(`Already resolved (status: ${record.status})`);
+  // Only one request may act on a given approval. Without this, a second click,
+  // a second tab or a retry while a slow tool (like the browser texting) is
+  // still running would execute it again, because the final status used to be
+  // written only after the tool finished.
+  if (!(await claimPendingAction(env, id))) throw new Error("Already being handled");
 
   record.resolvedAt = new Date().toISOString();
   record.resolvedBy = "Bryce";
@@ -3345,6 +3362,11 @@ async function resolvePendingAction(env, id, decision) {
     record.status = "denied";
     await appendLog(env, { who: "Approval queue", what: `Bryce denied ${record.tool}` });
   } else {
+    // Leave the pending list *before* running so no card (or button) is left
+    // for a second approval while this one is in flight.
+    record.status = "running";
+    record.startedAt = record.resolvedAt;
+    await env.HERMES_KV.put(`pending:${id}`, JSON.stringify(record));
     try {
       record.result = await dispatchTool(env, record.tool, record.input);
       record.status = "approved";
