@@ -223,6 +223,29 @@ async function listCleansEventsForDay(env, calendarId, dateOnly) {
 const SPOTIFY_REDIRECT_URI = "https://hermes-project.spotlesscleaninglhc.workers.dev/api/spotify/callback";
 const SPOTIFY_SCOPES = "user-modify-playback-state user-read-playback-state user-read-currently-playing";
 
+// ---- OAuth sign-in: the `state` check ------------------------------------
+//
+// A callback that accepts any `code` can be fed a code the attacker obtained
+// for their own account, swapping the stored connection. Each login now mints
+// a random single-use `state`, kept in KV for 10 minutes, and the callback
+// refuses anything that doesn't present one. Only someone who got past
+// Cloudflare Access to /login can mint one.
+async function newOauthState(env, provider) {
+  const state = crypto.randomUUID();
+  await env.HERMES_KV.put(`oauth_state:${provider}:${state}`, "1", { expirationTtl: 600 });
+  return state;
+}
+
+async function consumeOauthState(env, provider, state) {
+  if (!state || !/^[0-9a-f-]{36}$/.test(state)) return false;
+  const key = `oauth_state:${provider}:${state}`;
+  if (!(await env.HERMES_KV.get(key))) return false;
+  await env.HERMES_KV.delete(key);
+  return true;
+}
+
+const OAUTH_STATE_ERROR = "That sign-in link is invalid or has expired. Start again from the dashboard.";
+
 async function handleSpotifyLogin(env) {
   const clientId = await env.SPOTIFY_CLIENT_ID.get();
   const url = new URL("https://accounts.spotify.com/authorize");
@@ -230,6 +253,7 @@ async function handleSpotifyLogin(env) {
   url.searchParams.set("response_type", "code");
   url.searchParams.set("redirect_uri", SPOTIFY_REDIRECT_URI);
   url.searchParams.set("scope", SPOTIFY_SCOPES);
+  url.searchParams.set("state", await newOauthState(env, "spotify"));
   return Response.redirect(url.toString(), 302);
 }
 
@@ -263,6 +287,7 @@ async function handleSpotifyCallback(request, env) {
   if (error) return new Response(`Spotify authorization failed: ${error}`, { status: 400 });
   const code = url.searchParams.get("code");
   if (!code) return new Response("Missing code", { status: 400 });
+  if (!(await consumeOauthState(env, "spotify", url.searchParams.get("state")))) return new Response(OAUTH_STATE_ERROR, { status: 400 });
 
   const data = await spotifyTokenRequest(env, {
     grant_type: "authorization_code",
@@ -385,6 +410,7 @@ async function handleGoogleCalendarLogin(env) {
   url.searchParams.set("scope", GOOGLE_CALENDAR_SCOPE);
   url.searchParams.set("access_type", "offline");
   url.searchParams.set("prompt", "consent");
+  url.searchParams.set("state", await newOauthState(env, "google-calendar"));
   return Response.redirect(url.toString(), 302);
 }
 
@@ -414,6 +440,7 @@ async function handleGoogleCalendarCallback(request, env) {
   if (error) return new Response(`Google Calendar authorization failed: ${error}`, { status: 400 });
   const code = url.searchParams.get("code");
   if (!code) return new Response("Missing code", { status: 400 });
+  if (!(await consumeOauthState(env, "google-calendar", url.searchParams.get("state")))) return new Response(OAUTH_STATE_ERROR, { status: 400 });
 
   const data = await googleCalendarTokenRequest(env, {
     grant_type: "authorization_code",
@@ -743,6 +770,17 @@ const VOICE_CONTEXT_KEY = "browserbase_voice_context_id";
 const VOICE_LOGIN_SESSION_KEY = "browserbase_voice_login_session_id";
 const VOICE_HOSTS = new Set(["voice.google.com"]);
 
+// Keyed hash of a saved number, so an approval can be bound to the exact number
+// it showed without storing the number again (a plain hash of a 10-digit phone
+// number can be brute-forced; the key makes it useless outside this Worker).
+async function recipientFingerprint(env, phone) {
+  const keyText = env.ZAPIER_WEBHOOK_SECRET ? await env.ZAPIER_WEBHOOK_SECRET.get() : "";
+  if (!keyText) return null;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(keyText), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`recipient:${phone}`));
+  return Array.from(new Uint8Array(sig)).slice(0, 16).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 async function getCleanerPhones(env) {
   const raw = await env.HERMES_KV.get("cleaner_phones");
   return raw ? JSON.parse(raw) : {};
@@ -961,12 +999,19 @@ async function checkGoogleVoice(env) {
 
 // Runs the Google Voice compose flow. send:false is the dry run: it goes as far
 // as typing the message, takes screenshots, clears the box and sends NOTHING.
-async function runVoiceCompose(env, { cleaner_name, message, send }) {
+async function runVoiceCompose(env, { cleaner_name, message, send, expectedRecipient }) {
   const roster = await getCleanerRoster(env);
   const key = String(cleaner_name || "").trim().toLowerCase();
   if (!roster[key]) throw new Error(`Unknown cleaner "${cleaner_name}". Known cleaners: ${Object.keys(roster).join(", ")}.`);
   const phone = (await getCleanerPhones(env))[key];
   if (!phone) throw new Error(`No text number saved for ${cleaner_name}. Ask Bryce for it and save it with set_cleaner_phone.`);
+  if (send) {
+    // The approval card showed the number's last 4 digits and bound the approval
+    // to that exact number. Anything that changed it since (or an approval queued
+    // without the binding) must not send.
+    if (!expectedRecipient) throw new Error(`This text was queued without a recipient check, so nothing was sent. Ask Deja to queue it again.`);
+    if (expectedRecipient !== (await recipientFingerprint(env, phone))) throw new Error(`The saved number for ${cleaner_name} changed after this text was queued, so nothing was sent. Ask Deja to queue it again and check the number on the card.`);
+  }
   const body = String(message || "").trim();
   if (!body || body.length > 600) throw new Error("message must be 1-600 characters.");
   const national = phone.slice(2);
@@ -1073,8 +1118,8 @@ async function runVoiceCompose(env, { cleaner_name, message, send }) {
   }
 }
 
-async function sendGoogleVoiceText(env, { cleaner_name, message }) {
-  return await runVoiceCompose(env, { cleaner_name, message, send: true });
+async function sendGoogleVoiceText(env, { cleaner_name, message, expectedRecipient }) {
+  return await runVoiceCompose(env, { cleaner_name, message, send: true, expectedRecipient });
 }
 
 // Read-only: what actually happened to recent approved texts. The approval
@@ -3273,7 +3318,42 @@ async function json(data, init = {}) {
 // (propose_site_edit already has its own GitHub-PR review gate). Approval only ever happens via the dashboard's
 // Approve/Deny buttons, never by chat/voice reply.
 
-const APPROVAL_REQUIRED_TOOLS = new Set(["cancel_turno_clean", "edit_google_business", "reschedule_clean", "cancel_clean", "send_wave_invoices", "text_cleaner"]);
+const APPROVAL_REQUIRED_TOOLS = new Set(["cancel_turno_clean", "edit_google_business", "reschedule_clean", "cancel_clean", "send_wave_invoices", "text_cleaner", "set_cleaner_phone"]);
+
+// ---- Taint gate: text from outside the business can't trigger actions -----
+//
+// Email bodies, web pages, Google Business pages and Google Voice message
+// lists (anyone can text that number) are written by people outside the
+// business. The prompt tells Deja to treat them as untrusted, but
+// a prompt is not a control, so this is the control: once a conversation has
+// run any tool that returns outside text, every tool that is not plainly
+// read-only goes through the approval queue instead of running. It fails
+// closed: a tool added later is gated until someone deliberately lists it in
+// TAINT_SAFE_TOOLS. Tools in APPROVAL_REQUIRED_TOOLS are gated either way.
+const UNTRUSTED_CONTENT_TOOLS = new Set(["search_gmail", "read_email", "fetch_site", "browse_google_business", "check_text_status", "check_google_voice"]);
+const TAINT_SAFE_TOOLS = new Set([
+  "search_gmail", "read_email", "fetch_site", "browse_google_business",
+  "list_vault_notes", "read_vault_note", "list_upcoming_cleanings", "get_cleaner_payroll",
+  "check_invoice_payment", "audit_draft_invoices", "list_wave_invoices",
+  "check_text_status", "get_clean_invite_links", "check_google_voice", "control_spotify"
+]);
+
+// True when this conversation (earlier turns replayed from the dashboard, plus
+// this request) has already run a tool that returns outside text. `degraded`
+// means the replayed history could not be trusted to carry its tool calls, and
+// a plain-text assistant turn means the client never sent them, so in both
+// cases we can't tell and assume the worst.
+function conversationIsTainted(messages, degraded) {
+  if (degraded) return true;
+  for (const m of messages) {
+    if (m.role !== "assistant") continue;
+    if (typeof m.content === "string") return true;
+    for (const b of m.content) {
+      if (b.type === "tool_use" && UNTRUSTED_CONTENT_TOOLS.has(b.name)) return true;
+    }
+  }
+  return false;
+}
 
 // KV's list() operation has its own, much smaller daily quota (1,000/day on
 // the free plan) than get()/put() (100,000/day) — and the dashboard polls
@@ -3301,6 +3381,7 @@ async function addToPendingIndex(env, id) {
 }
 
 async function createPendingAction(env, { tool, input, reason }) {
+  if (tool === "text_cleaner") input = await bindTextRecipient(env, input);
   const id = crypto.randomUUID();
   const record = {
     id, tool, input, reason: reason || null,
@@ -3313,6 +3394,17 @@ async function createPendingAction(env, { tool, input, reason }) {
   await addToPendingIndex(env, id);
   await appendLog(env, { who: "Approval queue", what: `${tool} queued for Bryce's approval` + (reason ? ` — ${reason}` : "") });
   return record;
+}
+
+// A text approval has to show who it really goes to. The recipient is a
+// roster name, but the number is looked up from KV when the text is sent, so
+// the card carries the last 4 digits and a keyed fingerprint of the number, and
+// sending fails if the saved number is no longer the one that was approved.
+async function bindTextRecipient(env, input) {
+  const key = String((input && input.cleaner_name) || "").trim().toLowerCase();
+  const phone = (await getCleanerPhones(env))[key];
+  if (!phone) return input; // runVoiceCompose will refuse: no saved number
+  return { ...input, to_last4: phone.slice(-4), to_fp: await recipientFingerprint(env, phone) };
 }
 
 async function listPendingActions(env, { status = "pending" } = {}) {
@@ -3333,10 +3425,27 @@ async function getPendingAction(env, id) {
   return raw ? JSON.parse(raw) : null;
 }
 
+// KV has no compare-and-set, so claim the action with a unique token and read it
+// back: if another request wrote its token in between, only the one whose token
+// survived goes on. This closes the race for requests that overlap in time,
+// which is the realistic case (double click, two open tabs, a retry).
+async function claimPendingAction(env, id) {
+  const key = `pending_claim:${id}`;
+  if (await env.HERMES_KV.get(key)) return false;
+  const token = crypto.randomUUID();
+  await env.HERMES_KV.put(key, token, { expirationTtl: 3600 });
+  return (await env.HERMES_KV.get(key)) === token;
+}
+
 async function resolvePendingAction(env, id, decision) {
   const record = await getPendingAction(env, id);
   if (!record) { const err = new Error("Pending action not found"); err.status = 404; throw err; }
   if (record.status !== "pending") throw new Error(`Already resolved (status: ${record.status})`);
+  // Only one request may act on a given approval. Without this, a second click,
+  // a second tab or a retry while a slow tool (like the browser texting) is
+  // still running would execute it again, because the final status used to be
+  // written only after the tool finished.
+  if (!(await claimPendingAction(env, id))) throw new Error("Already being handled");
 
   record.resolvedAt = new Date().toISOString();
   record.resolvedBy = "Bryce";
@@ -3345,6 +3454,11 @@ async function resolvePendingAction(env, id, decision) {
     record.status = "denied";
     await appendLog(env, { who: "Approval queue", what: `Bryce denied ${record.tool}` });
   } else {
+    // Leave the pending list *before* running so no card (or button) is left
+    // for a second approval while this one is in flight.
+    record.status = "running";
+    record.startedAt = record.resolvedAt;
+    await env.HERMES_KV.put(`pending:${id}`, JSON.stringify(record));
     try {
       record.result = await dispatchTool(env, record.tool, record.input);
       record.status = "approved";
@@ -3818,7 +3932,7 @@ async function dispatchTool(env, name, input) {
   if (name === "get_clean_invite_links") return await getCleanInviteLinks(env, { cleaner_name: input.cleaner_name, days: input.days });
   if (name === "set_cleaner_phone") return await setCleanerPhone(env, input);
   if (name === "text_cleaner_schedule") return await queueCleanerScheduleText(env, { cleaner_name: input.cleaner_name, days: input.days });
-  if (name === "text_cleaner") return await sendGoogleVoiceText(env, { cleaner_name: input.cleaner_name, message: input.message });
+  if (name === "text_cleaner") return await sendGoogleVoiceText(env, { cleaner_name: input.cleaner_name, message: input.message, expectedRecipient: input.to_fp });
   if (name === "check_google_voice") return await checkGoogleVoice(env);
   if (name === "test_voice_compose") return await runVoiceCompose(env, { cleaner_name: input.cleaner_name, message: input.message || "test", send: false });
   if (name === "browse_google_business") return await browseGoogleBusiness(env, input);
@@ -4007,7 +4121,9 @@ function sanitizeHistory(raw) {
   const trimmed = start === -1 ? [] : clean.slice(start);
 
   if (historyPairsAreValid(trimmed)) return trimmed;
-  return textOnlyHistory(trimmed);
+  const fallback = textOnlyHistory(trimmed);
+  fallback.degraded = true; // tool calls were dropped, so the taint gate must assume the worst
+  return fallback;
 }
 
 // Every assistant tool_use must be answered by a tool_result for the same ids
@@ -4580,8 +4696,13 @@ async function handleAsk(request, env) {
     const toolResults = [];
     for (const toolUse of toolUses) {
       let toolResult;
-      if (APPROVAL_REQUIRED_TOOLS.has(toolUse.name)) {
-        const pending = await createPendingAction(env, { tool: toolUse.name, input: toolUse.input });
+      const tainted = !TAINT_SAFE_TOOLS.has(toolUse.name) && conversationIsTainted(messages, history.degraded);
+      if (APPROVAL_REQUIRED_TOOLS.has(toolUse.name) || tainted) {
+        const pending = await createPendingAction(env, {
+          tool: toolUse.name,
+          input: toolUse.input,
+          reason: tainted && !APPROVAL_REQUIRED_TOOLS.has(toolUse.name) ? "Deja read email or web content earlier in this conversation, so this needs your approval" : undefined
+        });
         toolResult = `This requires Bryce's approval before it runs. Queued on the dashboard as pending action #${pending.id.slice(0, 8)}. Tell him plainly you're waiting on his review there \u2014 don't say it's done.`;
       } else {
         try {
@@ -4738,6 +4859,96 @@ async function handleZapierStatusWebhook(request, env) {
   return json({ ok: true });
 }
 
+// ---- Cloudflare Access: verify the request really came through Access ------
+//
+// Nothing inside this Worker authenticates the dashboard API; it relies on
+// Cloudflare Access sitting in front of every address the Worker answers on.
+// If any address is ever left uncovered (a preview URL, a new hostname, a
+// misconfigured policy) the whole API would be open. Access puts a signed JWT
+// on each request it lets through (`Cf-Access-Jwt-Assertion`); checking it here
+// means an uncovered address fails closed instead of open.
+//
+// Configuration (plain vars in wrangler.jsonc; none are secrets):
+//   CF_ACCESS_TEAM_DOMAIN  e.g. "yourteam.cloudflareaccess.com"
+//   CF_ACCESS_AUD          the Access application's AUD tag; comma-separate
+//                          several if the workers.dev and custom-domain
+//                          Access apps each have their own
+//   CF_ACCESS_MODE         "log"     verify and record failures, never block
+//                          "enforce" refuse requests that fail verification
+// Unset (the default) = off: behavior is unchanged. Webhooks are exempt: they
+// bypass Access by design and use their own secrets.
+const ACCESS_JWKS_TTL_MS = 60 * 60 * 1000;
+let accessJwksCache = { team: null, keys: null, fetchedAt: 0 };
+
+function b64urlToBytes(str) {
+  const pad = "=".repeat((4 - (str.length % 4)) % 4);
+  const bin = atob(str.replace(/-/g, "+").replace(/_/g, "/") + pad);
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+async function getAccessKeys(env, { force = false } = {}) {
+  const team = env.CF_ACCESS_TEAM_DOMAIN;
+  const fresh = accessJwksCache.team === team && accessJwksCache.keys && Date.now() - accessJwksCache.fetchedAt < ACCESS_JWKS_TTL_MS;
+  if (fresh && !force) return accessJwksCache.keys;
+  try {
+    const res = await fetch(`https://${team}/cdn-cgi/access/certs`);
+    if (!res.ok) throw new Error(`Access key fetch failed: ${res.status}`);
+    const body = await res.json();
+    accessJwksCache = { team, keys: body.keys || [], fetchedAt: Date.now() };
+  } catch (err) {
+    // A brief outage of the key endpoint must not lock Bryce out in enforce
+    // mode: keep using the last keys we fetched (they only change on rotation).
+    if (accessJwksCache.team === team && accessJwksCache.keys) return accessJwksCache.keys;
+    throw err;
+  }
+  return accessJwksCache.keys;
+}
+
+// Returns { ok: true, claims } or { ok: false, reason }.
+async function verifyAccessJwt(env, token) {
+  try {
+    if (!token) return { ok: false, reason: "no Access token on the request" };
+    const parts = token.split(".");
+    if (parts.length !== 3) return { ok: false, reason: "malformed token" };
+    const header = JSON.parse(new TextDecoder().decode(b64urlToBytes(parts[0])));
+    if (header.alg !== "RS256") return { ok: false, reason: "unexpected signing algorithm" };
+    let jwk = (await getAccessKeys(env)).find((k) => k.kid === header.kid);
+    if (!jwk) jwk = (await getAccessKeys(env, { force: true })).find((k) => k.kid === header.kid); // key rotation
+    if (!jwk) return { ok: false, reason: "signing key not recognised" };
+    const key = await crypto.subtle.importKey("jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+    const valid = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64urlToBytes(parts[2]), new TextEncoder().encode(`${parts[0]}.${parts[1]}`));
+    if (!valid) return { ok: false, reason: "bad signature" };
+    const claims = JSON.parse(new TextDecoder().decode(b64urlToBytes(parts[1])));
+    const now = Math.floor(Date.now() / 1000), leeway = 60;
+    if (typeof claims.exp !== "number" || claims.exp + leeway < now) return { ok: false, reason: "token expired" };
+    if (typeof claims.nbf === "number" && claims.nbf - leeway > now) return { ok: false, reason: "token not valid yet" };
+    if (claims.iss !== `https://${env.CF_ACCESS_TEAM_DOMAIN}`) return { ok: false, reason: "wrong issuer" };
+    const wanted = String(env.CF_ACCESS_AUD || "").split(",").map((a) => a.trim()).filter(Boolean);
+    const got = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+    if (!wanted.length || !got.some((a) => wanted.includes(a))) return { ok: false, reason: "token is for a different application" };
+    return { ok: true, claims };
+  } catch (err) {
+    return { ok: false, reason: `could not verify (${err.message})` };
+  }
+}
+
+// Returns a Response to refuse the request, or null to carry on.
+async function checkAccessJwt(request, env, pathname) {
+  const mode = String(env.CF_ACCESS_MODE || "").toLowerCase();
+  if ((mode !== "log" && mode !== "enforce") || !env.CF_ACCESS_TEAM_DOMAIN || !env.CF_ACCESS_AUD) return null;
+  if (pathname.startsWith("/webhooks/")) return null;
+  const result = await verifyAccessJwt(env, request.headers.get("cf-access-jwt-assertion"));
+  if (result.ok) return null;
+  if (mode === "enforce") return json({ error: "Not authenticated" }, { status: 403 });
+  // Log-only: say so in the Activity log, at most once an hour, never block.
+  console.warn(`Access JWT check failed (log-only): ${result.reason} [${pathname}]`);
+  if (!(await env.HERMES_KV.get("access_jwt_warned"))) {
+    await env.HERMES_KV.put("access_jwt_warned", "1", { expirationTtl: 3600 });
+    await appendLog(env, { who: "Deja", what: `Access check (log-only): a request reached ${pathname} without a valid Cloudflare Access token: ${result.reason}` });
+  }
+  return null;
+}
+
 async function handlePendingList(env) {
   return json(await listPendingActions(env));
 }
@@ -4757,12 +4968,55 @@ async function handlePendingDecide(request, env) {
   }
 }
 
+// ---- Request guard: only this site may change things ----------------------
+//
+// The dashboard and its API sit behind Cloudflare Access, whose session cookie
+// a browser attaches to requests started by *other* sites too. This guard makes
+// the Worker itself refuse the cross-site shapes, so nothing depends on that
+// cookie's settings:
+//   - any state-changing request (not GET/HEAD) must be application/json
+//     (a plain HTML form cannot send that without a CORS preflight, which this
+//     Worker never grants), and must not be marked cross-site by the browser
+//     (Origin / Sec-Fetch-Site);
+//   - the GET routes that start or end a browser session refuse cross-site
+//     navigations.
+// Non-browser callers (the local scripts) send neither header and pass. Webhooks
+// are exempt: they have no browser and authenticate with their own secrets. The
+// OAuth callbacks stay open to the provider's redirect and are protected by
+// their `state` check.
+const STATE_CHANGING_GET_PATHS = new Set([
+  "/api/browserbase/login", "/api/browserbase/login/done",
+  "/api/browserbase/voice-login", "/api/browserbase/voice-login/done"
+]);
+
+function guardRequest(request, pathname, method) {
+  if (pathname.startsWith("/webhooks/")) return null;
+  const site = request.headers.get("sec-fetch-site");
+  if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+    if (!/^application\/json(\s*;|$)/i.test(request.headers.get("content-type") || "")) {
+      return json({ error: "Content-Type must be application/json" }, { status: 415 });
+    }
+    const origin = request.headers.get("origin");
+    if (origin && origin !== new URL(request.url).origin) return json({ error: "Cross-origin request refused" }, { status: 403 });
+    if (site && site !== "same-origin" && site !== "none") return json({ error: "Cross-site request refused" }, { status: 403 });
+  } else if (STATE_CHANGING_GET_PATHS.has(pathname) && (site === "cross-site" || site === "same-site")) {
+    return json({ error: "Open this from the dashboard" }, { status: 403 });
+  }
+  return null;
+}
+
 // ---- Router -----------------------------------------------------------
 
 export default {
   async fetch(request, env) {
+    const notAuthenticated = await checkAccessJwt(request, env, new URL(request.url).pathname);
+    if (notAuthenticated) return notAuthenticated;
+
     const { pathname } = new URL(request.url);
     const { method } = request;
+
+    const refused = guardRequest(request, pathname, method);
+    if (refused) return refused;
 
     if (pathname === "/api/status" && method === "GET") {
       return json(await getStatusOrDefault(env));
