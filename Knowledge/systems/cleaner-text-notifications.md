@@ -169,6 +169,15 @@ never sees a password.
   never clicks Send, for diagnosing by eye; try a short plain message with no
   links first, then the real one. If it still fails, the screenshots and the
   controls list in the error say exactly where.
+- **Send button is an icon (2026-10-02, from Bryce's screenshot):** in Google
+  Voice the compose box ("Type a message") has an icon-only paper-plane at its
+  right end — no visible "Send" text, and the page also has a keypad panel on
+  the right ("Call as", "Enter a name or number") and an attach-image button on
+  the left. `findSend` therefore looks first for an exact `Send`/`Send message`
+  label and otherwise takes the small button on the compose box's row just to
+  its right (not the left attach button, not the keypad panel); the outcome
+  reports which method found it. If the box doesn't clear after the click it
+  presses Enter once (Voice sends on Enter).
 - **Replies** land in Bryce's Google Voice, not in Hermes; he reads and
   answers them himself.
 - **Untested against live Google Voice when it shipped.** The page selectors
