@@ -2861,12 +2861,18 @@ async function recordCleanerPayment(env, { cleaner_name, amount, date }) {
   };
   await env.HERMES_KV.put(`payroll_payment:${record.id}`, JSON.stringify(record));
   await addToPaymentIndex(env, record.id);
-  await env.HERMES_KV.put(`payroll:paid_through:${cleanerKey}`, paidOn);
+  // Paid-through is the last job this payment actually covered, NOT the day
+  // the payment was recorded. "owed" only counts jobs through yesterday, so
+  // recording on e.g. Oct 1 covers jobs through Sept 30 -- stamping Oct 1
+  // would silently swallow that day's job as already paid. With no jobs
+  // covered, the existing paid-through date is left alone.
+  const lastCoveredDate = before.jobs.reduce((max, job) => (job.date > max ? job.date : max), before.paidThrough);
+  await env.HERMES_KV.put(`payroll:paid_through:${cleanerKey}`, lastCoveredDate);
 
   const mismatch = Math.abs(amount - before.owed) > 0.01
     ? ` (computed owed was $${before.owed.toFixed(2)} for ${before.jobCount} job${before.jobCount === 1 ? "" : "s"} -- flagging the difference, not blocking it)`
     : "";
-  await appendLog(env, { who: "Bookkeeper", what: `Recorded $${amount.toFixed(2)} paid to ${cleaner_name} through ${paidOn}${mismatch}` });
+  await appendLog(env, { who: "Bookkeeper", what: `Recorded $${amount.toFixed(2)} paid to ${cleaner_name} on ${paidOn} (jobs covered through ${lastCoveredDate})${mismatch}` });
 
   const cleanerLabel = cleanerKey.charAt(0).toUpperCase() + cleanerKey.slice(1);
   let waveTransactionId = null;

@@ -29,7 +29,7 @@ hard line, not a caution that eases with more supervision.
   would claim months of jobs Bryce already paid by hand before this
   existed.
 - **Recording a payment** (`recordCleanerPayment`) moves that cleaner's
-  paid-through date forward and appends a permanent record — it never
+  paid-through date forward — to the last job the payment covered, not the day it was recorded (see [[2026-10-02-payroll-paid-through-stamped-record-date]]) — and appends a permanent record — it never
   edits or deletes history. If the amount Bryce says he paid doesn't
   match the computed owed total, it's recorded anyway (he might round,
   or pay a different amount on purpose) but flagged in the response and
