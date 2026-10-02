@@ -1,0 +1,18 @@
+{
+  "name": "hermes-local",
+  "owner": {
+    "name": "Spotless Cleaning"
+  },
+  "plugins": [
+    {
+      "name": "securitymaxxing",
+      "source": "./securitymaxxing",
+      "description": "Evidence-based application security audits with file:line proof and patches."
+    },
+    {
+      "name": "seo-aeo-geo-ultimate",
+      "source": "./seo-aeo-geo",
+      "description": "SEO, AEO, GEO and AI-search router with 27 evidence-first skills (reviewed copy of oegeyilmaz9/seo-aeo-geo-ultimate 3.1.0)."
+    }
+  ]
+}

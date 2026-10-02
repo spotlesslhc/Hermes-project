@@ -20,6 +20,8 @@
     --amber:#E3B45D;
     --amber-deep:#F0C878;
     --green:#5CB690;
+    --green-text:#5CB690;
+    --on-amber:#0E1518;
     --red:#D97A68;
     --shadow: none;
   }
@@ -35,6 +37,8 @@
     --amber:#D9A441;
     --amber-deep:#96701F;
     --green:#3F8F6F;
+    --green-text:#2B7455;
+    --on-amber:#FFFFFF;
     --red:#B24B3B;
   }
 
@@ -183,7 +187,7 @@
     font-family:'Work Sans', sans-serif; font-size:13.5px; min-width:130px;
   }
   .finance-entry-msg{font-size:12.5px; color:var(--ink-soft);}
-  .finance-entry-msg.ok{color:var(--green);}
+  .finance-entry-msg.ok{color:var(--green-text);}
   .finance-entry-msg.err{color:var(--red);}
 
   /* Agents grid — asymmetric, not uniform cards */
@@ -274,6 +278,20 @@
   .log-row .what{color:var(--ink);}
   .log-row.compact{grid-template-columns:72px 1fr;}
   .log-empty{padding:14px 16px; font-size:12.5px; color:var(--ink-soft);}
+  /* Long activity entries fold into a short title with an arrow; click to expand. */
+  .log-toggle{
+    all:unset; box-sizing:border-box; display:flex; align-items:flex-start; gap:6px;
+    width:100%; cursor:pointer; color:var(--ink);
+  }
+  .log-toggle:focus-visible{outline:2px solid var(--teal-deep); outline-offset:2px; border-radius:3px;}
+  .log-title{flex:0 1 auto; min-width:0; overflow-wrap:anywhere;}
+  .log-arrow{
+    flex:none; width:16px; height:16px; margin-top:1px; color:var(--ink-soft);
+    transition:transform .15s ease;
+  }
+  .log-toggle[aria-expanded="true"] .log-arrow{transform:rotate(90deg);}
+  .log-full{margin-top:6px; padding-left:2px; color:var(--ink-soft); white-space:pre-wrap; overflow-wrap:anywhere;}
+  .log-full[hidden]{display:none;}
 
   /* Activity — one list per agent */
   .activity-grid{
@@ -317,7 +335,7 @@
     font-family:'Work Sans', sans-serif; font-size:13px; width:90px;
   }
   .payroll-msg{font-size:12px; color:var(--ink-soft); flex-basis:100%;}
-  .payroll-msg.ok{color:var(--green);}
+  .payroll-msg.ok{color:var(--green-text);}
   .payroll-msg.err{color:var(--red);}
 
   /* Ask Deja */
@@ -342,11 +360,14 @@
     font-size:12px; color:var(--ink-soft); cursor:pointer; user-select:none;
   }
   .voice-toggle input{accent-color:var(--teal);}
+  .volume-knob input{width:80px;}
   .ask-reply{
     font-size:14px; line-height:1.55; color:var(--ink);
     white-space:pre-wrap; margin-bottom:14px; min-height:22px;
   }
   .ask-reply.pending{color:var(--ink-soft); font-style:italic;}
+  .ask-voice-note{font-size:12px; line-height:1.4; color:var(--amber-deep); margin:-8px 0 14px;}
+  .ask-voice-note[hidden]{display:none;}
   .ask-row{display:flex; gap:10px;}
   .mic-btn{
     flex:none; width:38px; height:38px; border-radius:3px;
@@ -355,7 +376,7 @@
     cursor:pointer; transition: border-color .15s, background .15s, color .15s;
   }
   .mic-btn:hover{border-color:var(--teal);}
-  .mic-btn.listening{background:var(--amber-deep); border-color:var(--amber-deep); color:#fff; animation:pulse 1.4s ease-in-out infinite;}
+  .mic-btn.listening{background:var(--amber-deep); border-color:var(--amber-deep); color:var(--on-amber); animation:pulse 1.4s ease-in-out infinite;}
   .mic-btn[disabled]{opacity:.35; cursor:not-allowed;}
   .ask-input{
     flex:1; min-width:0; font-family:inherit; font-size:13.5px;
@@ -382,6 +403,25 @@
   ::selection{background:var(--teal); color:var(--paper);}
   a{color:inherit;}
   button:focus-visible, a:focus-visible{outline:2px solid var(--teal); outline-offset:2px;}
+
+  /* Respect "reduce motion": no looping pulses or hover slides. The orb canvas
+     is throttled in its own frame loop (see frame()). */
+  @media (prefers-reduced-motion: reduce){
+    *, *::before, *::after{
+      animation-duration:.01ms !important; animation-iteration-count:1 !important;
+      transition-duration:.01ms !important; scroll-behavior:auto !important;
+    }
+    .app-tile:hover{transform:none;}
+  }
+
+  /* Touch screens: controls at least 44x44 CSS px. Mouse layouts are unchanged. */
+  @media (pointer:coarse){
+    .btn, .float-btn{min-height:44px; padding-left:14px; padding-right:14px;}
+    .payroll-item-note .btn{min-height:44px; padding:6px 12px; font-size:12px;}
+    .theme-btn{width:44px; height:44px;}
+    .finance-entry input, .payroll-pay-form input{min-height:44px;}
+    .voice-toggle{min-height:44px;}
+  }
 </style>
 </head>
 <body>
@@ -404,18 +444,23 @@
       <span class="ask-avatar" id="askAvatar">🪽</span>
       <div>
         <div class="ask-name">Deja</div>
-        <div class="ask-state" id="askState">Ready</div>
+        <div class="ask-state" id="askState" role="status">Ready</div>
       </div>
       <label class="voice-toggle">
         <input type="checkbox" id="voiceToggle" checked>
         <span>Speak replies</span>
+      </label>
+      <label class="voice-toggle volume-knob" title="Deja's voice volume">
+        <span>Volume</span>
+        <input type="range" id="volumeKnob" min="0" max="100" step="5" value="100" aria-label="Deja voice volume">
       </label>
       <label class="voice-toggle">
         <input type="checkbox" id="wakeToggle" checked>
         <span>Listen for "Hey Deja"</span>
       </label>
     </div>
-    <div class="ask-reply" id="askReply">Ask about a job, a property, or what needs attention today.</div>
+    <div class="ask-reply" id="askReply" aria-live="polite">Ask about a job, a property, or what needs attention today.</div>
+    <div class="ask-voice-note" id="askVoiceNote" role="status" hidden></div>
     <form id="askForm" class="ask-row">
       <button type="button" class="mic-btn" id="micBtn" title="Talk to Deja" aria-label="Talk to Deja">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
@@ -614,7 +659,7 @@
       <input type="number" id="feExpenses" min="0" step="0.01" required>
     </label>
     <button class="btn primary" type="submit">Save</button>
-    <span class="finance-entry-msg" id="feMsg"></span>
+    <span class="finance-entry-msg" id="feMsg" role="status"></span>
   </form>
 
   <div class="finance-stats" id="financeStats">
@@ -699,11 +744,15 @@
   tick();
   setInterval(tick, 30000);
 
-  // Plain user/Deja turns for this page session only (resets on reload) — sent
-  // back with each /api/ask call so she still has the thread if she asked a
-  // clarifying question and is now getting the answer. Capped so a long
-  // back-and-forth doesn't grow the request without bound.
-  let dejaHistory = [];
+  // This page session's conversation with Deja (resets on reload), sent back
+  // with each /api/ask call so she still has the thread if she asked a
+  // clarifying question, and so she can see which tools she actually ran
+  // earlier. Kept as whole exchanges -- the user's message, any tool_use /
+  // tool_result blocks, and her reply, exactly as /api/ask returned them in
+  // `turn` -- so trimming to the most recent ones never separates a tool call
+  // from its result. Capped so a long back-and-forth doesn't grow the request
+  // without bound.
+  let dejaExchanges = [];
   const DEJA_HISTORY_MAX_TURNS = 6;
 
   const STATUS_DOT = { running: '', attn: 'amber', error: 'red', idle: '' };
@@ -774,6 +823,51 @@
     'Site Editor': 'logList-site_editor'
   };
 
+  // Long entries (more than ~90 characters, or multi-line) show as a short title
+  // plus an arrow; clicking expands the whole text. Short entries stay as-is.
+  const LOG_LONG = 90;
+  const expandedLogs = new Set();
+  function logTitle(text){
+    const flat = String(text).replace(/\s+/g, ' ').trim();
+    const cut = flat.slice(15).search(/(\. |: | — | - |; | \()/);
+    let title = cut >= 0 ? flat.slice(0, cut + 15) : flat;
+    if(title.length > 70) title = title.slice(0, 67).replace(/\s+\S*$/, '') + '…';
+    return title.replace(/[.:;,]$/, '');
+  }
+  function logRowHtml(e){
+    const what = String(e.what || '');
+    const key = (e.time || '') + '|' + what.slice(0, 60);
+    if(what.length <= LOG_LONG && what.indexOf('\n') < 0){
+      return `
+            <div class="log-row compact">
+              <span class="t">${timeAgo(e.time)}</span>
+              <span class="what">${escapeHtml(what)}</span>
+            </div>`;
+    }
+    const open = expandedLogs.has(key);
+    return `
+            <div class="log-row compact">
+              <span class="t">${timeAgo(e.time)}</span>
+              <span class="what">
+                <button type="button" class="log-toggle" aria-expanded="${open}" data-key="${escapeHtml(key)}">
+                  <span class="log-title">${escapeHtml(logTitle(what))}</span>
+                  <svg class="log-arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg>
+                </button>
+                <div class="log-full"${open ? '' : ' hidden'}>${escapeHtml(what)}</div>
+              </span>
+            </div>`;
+  }
+  document.addEventListener('click', (ev) => {
+    const btn = ev.target.closest && ev.target.closest('.log-toggle');
+    if(!btn) return;
+    const open = btn.getAttribute('aria-expanded') !== 'true';
+    btn.setAttribute('aria-expanded', String(open));
+    const full = btn.parentElement.querySelector('.log-full');
+    if(full) full.hidden = !open;
+    const key = btn.getAttribute('data-key');
+    if(open) expandedLogs.add(key); else expandedLogs.delete(key);
+  });
+
   async function loadLog(){
     try{
       const res = await fetch('/api/log');
@@ -790,11 +884,7 @@
         const container = document.getElementById(id);
         const rows = grouped[who];
         container.innerHTML = rows.length
-          ? rows.map(e => `
-            <div class="log-row compact">
-              <span class="t">${timeAgo(e.time)}</span>
-              <span class="what">${e.what || ''}</span>
-            </div>`).join('')
+          ? rows.map(logRowHtml).join('')
           : '<div class="log-empty">No activity yet</div>';
       });
     }catch(e){ /* Not deployed yet, or offline — leave the preview data showing. */ }
@@ -867,7 +957,7 @@
       const res = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message, history: dejaHistory })
+        body: JSON.stringify({ message, history: dejaExchanges.flat() })
       });
       const data = await res.json();
       reply.classList.remove('pending');
@@ -876,8 +966,10 @@
       stateEl.textContent = 'Ready';
       if(window.DejaVoice) window.DejaVoice.setExpectFollowUp(res.ok ? !!data.keepListening : true);
       if(res.ok){
-        dejaHistory.push({ role: 'user', content: message }, { role: 'assistant', content: text });
-        dejaHistory = dejaHistory.slice(-DEJA_HISTORY_MAX_TURNS * 2);
+        dejaExchanges.push(Array.isArray(data.turn) && data.turn.length
+          ? data.turn
+          : [{ role: 'user', content: message }, { role: 'assistant', content: text }]);
+        dejaExchanges = dejaExchanges.slice(-DEJA_HISTORY_MAX_TURNS);
         loadLog();
         loadPending();
         if(document.getElementById('voiceToggle').checked){
@@ -899,6 +991,45 @@
       input.value = '';
     }
   });
+
+  // Browsers only let a page play sound after the person has interacted with
+  // it, and Safari/iPhone are strict about *which* element was unlocked. So
+  // keep one shared <audio> element and prime it on the first tap, click or
+  // keypress with a silent clip; every ElevenLabs reply then reuses it.
+  const dejaAudio = new Audio();
+
+  // Volume knob: 0-1, remembered between visits. Applies to both the
+  // ElevenLabs audio element and the browser-voice fallback (read in speak()).
+  // iOS Safari ignores HTMLMediaElement.volume (the hardware buttons control
+  // it there), so the knob has no effect on the ElevenLabs voice on iPhone.
+  const VOLUME_KEY = 'dejaVolume';
+  let dejaVolume = 1;
+  try{
+    const saved = parseFloat(localStorage.getItem(VOLUME_KEY));
+    if(saved >= 0 && saved <= 1) dejaVolume = saved;
+  }catch(e){}
+  dejaAudio.volume = dejaVolume;
+  const volumeKnob = document.getElementById('volumeKnob');
+  if(volumeKnob){
+    volumeKnob.value = String(Math.round(dejaVolume * 100));
+    volumeKnob.addEventListener('input', () => {
+      dejaVolume = Math.min(1, Math.max(0, volumeKnob.value / 100));
+      dejaAudio.volume = dejaVolume;
+      try{ localStorage.setItem(VOLUME_KEY, String(dejaVolume)); }catch(e){}
+    });
+  }
+  let dejaAudioUnlocked = false;
+  function unlockDejaAudio(){
+    if(dejaAudioUnlocked) return;
+    dejaAudioUnlocked = true;
+    dejaAudio.muted = true;
+    dejaAudio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+    const p = dejaAudio.play();
+    const restore = () => { dejaAudio.pause(); dejaAudio.muted = false; };
+    if(p && p.then) p.then(restore, () => { dejaAudio.muted = false; dejaAudioUnlocked = false; });
+    else restore();
+  }
+  ['pointerdown','touchend','keydown'].forEach((ev) => document.addEventListener(ev, unlockDejaAudio, { passive: true }));
 
   // Speaks a reply out loud: tries Deja's real ElevenLabs voice first (proxied
   // server-side so the API key never reaches the browser), and falls back to
@@ -922,26 +1053,50 @@
       window.speechSynthesis.cancel();
       const utter = new SpeechSynthesisUtterance(text);
       utter.rate = 1.02;
+      utter.volume = dejaVolume;
       utter.onstart = startUi;
       utter.onend = () => { endUi(); done(); };
       utter.onerror = () => { endUi(); done(); };
       window.speechSynthesis.speak(utter);
     }
 
+    // Deja falls back to the browser's robotic voice when the real one fails,
+    // which used to be invisible. Say why, right under her reply, so "she
+    // sounds like a robot" points at a cause (quota, key, blocked audio).
+    const voiceNote = document.getElementById('askVoiceNote');
+    const noteFallback = (reason) => {
+      console.warn('Deja voice fell back to the browser voice:', reason);
+      if(voiceNote){ voiceNote.textContent = 'Using the backup voice. ' + reason; voiceNote.hidden = false; }
+    };
+    const clearNote = () => { if(voiceNote){ voiceNote.hidden = true; voiceNote.textContent = ''; } };
+
     fetch('/api/speak', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text })
     }).then(async (res) => {
-      if(!res.ok) throw new Error('ElevenLabs voice not available');
+      if(!res.ok){
+        let reason = 'The voice service returned ' + res.status + '.';
+        try{ const j = await res.json(); if(j && (j.reason || j.error)) reason = j.reason || j.error; }catch(e){}
+        const err = new Error(reason); err.voiceReason = reason; throw err;
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audio.onplay = startUi;
+      // One long-lived element that was "unlocked" by a real click/tap (see
+      // unlockDejaAudio): browsers, Safari and iPhone especially, refuse to
+      // autoplay a brand-new Audio created after an async fetch.
+      const audio = dejaAudio;
+      audio.onplay = () => { clearNote(); startUi(); };
       audio.onended = () => { endUi(); URL.revokeObjectURL(url); done(); };
       audio.onerror = () => { endUi(); URL.revokeObjectURL(url); done(); };
-      audio.play().catch(() => { URL.revokeObjectURL(url); fallbackToSpeechSynthesis(); });
-    }).catch(() => {
+      audio.src = url;
+      audio.play().catch((e) => {
+        URL.revokeObjectURL(url);
+        noteFallback('Your browser blocked the audio from playing automatically (' + (e && e.name || 'error') + '). Tap anywhere on the page once and try again.');
+        fallbackToSpeechSynthesis();
+      });
+    }).catch((e) => {
+      noteFallback(e && e.voiceReason ? e.voiceReason : 'Could not reach the voice service. ' + (e && e.message || ''));
       fallbackToSpeechSynthesis();
     });
   }
@@ -1301,7 +1456,7 @@
             <form class="payroll-pay-form" data-cleaner="${key}">
               <input type="number" min="0.01" step="0.01" placeholder="Amount" class="payroll-amount" value="${s.owed > 0 ? s.owed.toFixed(2) : ''}" required>
               <button class="btn primary" type="submit">Mark as paid</button>
-              <span class="payroll-msg"></span>
+              <span class="payroll-msg" role="status"></span>
             </form>
           </div>`;
       }).join('');
@@ -1519,6 +1674,7 @@
       if(next === 'speaking') wrap.classList.add('state-speaking');
     };
 
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
     function frame(){
       t += 1;
       const speaking = state === 'speaking';
@@ -1578,7 +1734,8 @@
         ctx.fill();
       }
 
-      requestAnimationFrame(frame);
+      if(reduceMotion.matches) setTimeout(() => requestAnimationFrame(frame), 500);
+      else requestAnimationFrame(frame);
     }
 
     resize();

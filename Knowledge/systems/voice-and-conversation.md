@@ -88,3 +88,34 @@ immediately on the same account. So changing the voice later is simple:
 add a candidate to "My Voices" in ElevenLabs, get its voice ID, swap the
 `ELEVENLABS_VOICE_ID` constant near the top of `src/index.js`, test
 against a branch preview before merging.
+
+
+## When Deja sounds robotic (diagnosing the fallback)
+
+Added 2026-10-01. A robotic voice means the dashboard fell back to the
+browser's own `speechSynthesis` — the real ElevenLabs voice either failed
+or was blocked. That fallback used to be invisible, so the cause was
+guesswork. Now:
+
+- **The dashboard says why**, in a small amber line under Deja's reply
+  ("Using the backup voice. ElevenLabs character quota used up…"). The same
+  text goes to the browser console.
+- **`GET /api/speak/status`** (open it on the dashboard's own address)
+  asks ElevenLabs about the key, the plan's character allowance and whether
+  the configured voice is in the account, and returns a one-line `verdict`.
+  It spends no characters.
+- **`/api/speak` errors carry a `reason`** (quota used up, key rejected,
+  paid plan needed, voice not found, rate-limited) instead of a raw dump.
+
+The usual suspects, in rough order of likelihood:
+
+1. **Character quota used up.** *(This was the actual cause on 2026-10-01: 11 credits left of 10,000, 102 needed for one reply.)* Deja speaks every reply, so a small plan
+   (the free tier is ~10k characters/month) drains fast. ElevenLabs returns
+   a 401 with `quota_exceeded`. Fix: wait for the reset date shown in
+   `/api/speak/status`, upgrade the plan, or shorten spoken replies.
+2. **Browser blocked the audio.** `audio.play()` runs after an async fetch,
+   which Safari/iPhone treat as autoplay and refuse. The dashboard now
+   primes one shared `<audio>` element on the first tap/click/keypress
+   (`unlockDejaAudio`) and reuses it. If it still happens, the note says so.
+3. **Key, plan or voice changed** (rotated key, voice removed from "My
+   Voices", feature moved behind a paid plan). `/api/speak/status` names it.

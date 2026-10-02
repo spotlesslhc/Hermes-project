@@ -43,6 +43,15 @@ separate assignment mechanism.
 
 ## How it works
 
+**Changed 2026-10-02:** steps 1-4 below describe the original Zap-based
+design. `assignCleaner` now reads the Cleans calendar itself (the Worker's own
+Google connection, as the Turno automation does) and invites the cleaner to the
+soonest *unassigned* clean matching the property (street number, nickname or
+location; optional `date`), so it works for any clean on the calendar,
+including hand-made and `create_clean_event` ones, and warns if the cleaner is
+already on another clean that day. The old Zap ("Assign Cleaner to Turnover
+(Hermes)") is no longer called and can be left or turned off.
+
 1. Hermes calls the `assign_cleaner` tool (in `src/index.js`) with a
    property and a cleaner name.
 2. `assignCleaner()` looks up the most recent unassigned reservation for
@@ -97,8 +106,37 @@ overrides the default; there's no dashboard UI for editing it yet).
   [[unfinished-projects/zapier-overseer-buildout]] (formerly
   `Knowledge/unfinished-projects/zapier-overseer-buildout.md`).
 
+## Creating cleans from Deja (`create_clean_event`, added 2026-10-02)
+
+Deja can add a clean herself (`createCleanEvent`): same standard format as
+above, copying title, location, description and free/busy from the property's
+latest earlier clean, Peacock unless `same_day_checkin` (then Basil, and the
+"Same day checkin" line is added to the description). Matches by street number;
+nicknames (`DEFAULT_PROPERTY_NICKNAMES`, currently `ryan` → 1885 E Birkdale Ln,
+KV `property_nicknames` overrides) work, and a nicknamed event gets the address
+appended so street-number matching (assign_cleaner, the invoice check) works.
+No-op if that property already has a clean that day; asks for an address if
+there's nothing earlier to copy. No approval (nobody is notified); undo by
+deleting the event. Invites nobody — `assign_cleaner` is the next step.
+An *existing* event titled just "Ryan" is not fixed by this; rename it in
+Calendar (add the street number) so assign_cleaner can match it.
+
 ## Related: what each cleaner is owed
 
 The "Pay is $X" line in each event's description (documented above) is
 also what [[payroll]] reads to compute what's owed to each cleaner —
 built 2026-09-26, see that doc for how it works.
+
+## Cleaner says they never got an invite (`resend_cleaner_invites`)
+
+Amy (iCloud address, no Google Calendar app) relies only on invite emails.
+2026-10-02: her address on the events was correct (`abyers402@icloud.com` —
+capitalisation doesn't matter) and showed "awaiting", but her inbox was empty.
+So the calendar side was fine and the email wasn't arriving (or was sitting
+in junk). `resendCleanerInvites` re-sends unanswered invites by removing and
+re-adding the guest (Google only emails newly added guests; the removal uses
+`sendUpdates=none` so no cancellation goes out). If the re-sent invites still
+don't arrive, check Amy's iCloud **Junk** folder and that her real address is
+exactly that one; the fallback is the cleaner text reminders
+([[unfinished-projects/cleaner-sms-3week-notifications]]) or sharing the event
+link by text.
