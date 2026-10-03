@@ -160,6 +160,13 @@ Basil / "Same day checkin" treatment.
 - Synced bookings are remembered (`ical_synced:<uid>`), so a clean Bryce
   deletes by hand isn't recreated. A changed checkout date adds a clean on
   the new date and logs a note to check the old one.
-- **Not handled:** cancelled bookings disappear from the feed but their clean
-  isn't deleted automatically — use `cancel_clean`. Invites nobody and makes
-  no invoice (`assign_cleaner` / `create_wave_invoice` are the next steps).
+- **Cancellations:** a synced booking that turns `STATUS:CANCELLED` or simply
+  disappears from the feed (Airbnb mostly just drops it) is treated as
+  cancelled. If no cleaner is invited to its clean, it's removed via
+  `cancelClean` (draft invoice cleared by the 4pm check). If a cleaner is
+  already invited, nothing is removed — the Activity log tells Bryce to have
+  Deja run `cancel_clean` (needs his approval, since the cleaner gets an
+  email). An empty or non-iCal response is treated as a feed error, never as
+  "everything cancelled".
+- Invites nobody and makes no invoice (`assign_cleaner` /
+  `create_wave_invoice` are the next steps).

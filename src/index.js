@@ -2220,6 +2220,31 @@ function isIcalBlock(e) {
   return /not available|unavailable|blocked|closed/i.test(e.summary || "") || /cancel/i.test(e.status || "");
 }
 
+// A booking that was synced earlier is now cancelled (STATUS:CANCELLED, or --
+// as Airbnb does -- simply gone from the feed). cancelClean emails invited
+// cleaners and queues the draft invoice for deletion, which elsewhere needs
+// Bryce's approval, so it only runs here when nobody is invited yet;
+// otherwise Bryce is told to confirm it with Deja.
+async function handleIcalCancellation(env, property, record) {
+  const calendarId = await getCleansCalendarId(env);
+  const number = await resolveStreetNumber(env, property);
+  const day = await googleCalendarApi(
+    env,
+    `/calendars/${encodeURIComponent(calendarId)}/events?${new URLSearchParams({
+      timeMin: `${record.date}T00:00:00-07:00`, timeMax: `${record.date}T23:59:59-07:00`, singleEvents: "true", maxResults: "250"
+    })}`
+  );
+  const event = (day.items || []).find((e) => e.status !== "cancelled" && (e.summary || "").includes(number));
+  if (!event) return "already gone from the calendar";
+  const invited = (event.attendees || []).filter((a) => !a.self && !a.organizer);
+  if (invited.length) {
+    await appendLog(env, { who: "Scheduler", what: `${property}: the iCal feed shows the booking checking out ${record.date} is cancelled, but a cleaner is already invited to its clean. Nothing was removed -- tell Deja to cancel_clean ${property} on ${record.date} if the clean should go (she'll ask for your approval, since the cleaner gets an email).` });
+    return "cleaner already invited; needs approval";
+  }
+  await cancelClean(env, { property, date: record.date, keepInvoice: false });
+  return "removed (no cleaner was invited)";
+}
+
 async function syncIcalFeeds(env) {
   const feeds = await getIcalFeeds(env);
   const today = new Date().toISOString().slice(0, 10);
@@ -2229,25 +2254,43 @@ async function syncIcalFeeds(env) {
     try {
       const res = await fetch(url, { headers: { accept: "text/calendar" } });
       if (!res.ok) throw new Error(`feed returned HTTP ${res.status}`);
-      const all = parseIcalReservations(await res.text());
+      const body = await res.text();
+      // A blip that returns an empty/garbled page must never look like "every booking cancelled".
+      if (!body.includes("BEGIN:VCALENDAR")) throw new Error("response wasn't an iCal feed");
+      const all = parseIcalReservations(body);
       const bookings = all.filter((e) => !isIcalBlock(e));
+      const live = new Set();
       let created = 0;
+      let cancelled = 0;
       for (const b of bookings) {
         if (b.end < today || b.end > horizon) continue;
+        const id = b.uid || `${property}:${b.start}`;
+        live.add(id);
         // Remember what was synced so a clean Bryce later deletes or moves by
         // hand isn't recreated every day; a changed checkout date is new work.
-        const key = `ical_synced:${b.uid || `${property}:${b.start}`}`;
-        const prior = await env.HERMES_KV.get(key);
-        if (prior === b.end) continue;
+        const key = `ical_synced:${id}`;
+        const prior = JSON.parse((await env.HERMES_KV.get(key)) || "null");
+        if (prior?.date === b.end) continue;
         const sameDayCheckin = bookings.some((o) => o !== b && o.start === b.end);
         const r = await createCleanEvent(env, { property, date: b.end, sameDayCheckin });
-        await env.HERMES_KV.put(key, b.end, { expirationTtl: 60 * 60 * 24 * 400 });
+        await env.HERMES_KV.put(key, JSON.stringify({ property, date: b.end }), { expirationTtl: 60 * 60 * 24 * 400 });
         if (r.created) created++;
         if (prior) {
-          await appendLog(env, { who: "Scheduler", what: `${property}: a booking's checkout moved from ${prior} to ${b.end} in its iCal feed. A new clean was added for ${b.end}; the old one on ${prior} was left in place -- check whether to delete it.` });
+          await appendLog(env, { who: "Scheduler", what: `${property}: a booking's checkout moved from ${prior.date} to ${b.end} in its iCal feed. A new clean was added for ${b.end}; the old one on ${prior.date} was left in place -- check whether to delete it.` });
         }
       }
-      results.push({ property, bookings: bookings.length, created });
+      // Cancellations: previously synced, still upcoming, no longer a live booking.
+      const synced = await env.HERMES_KV.list({ prefix: "ical_synced:" });
+      for (const { name } of synced.keys) {
+        if (live.has(name.slice("ical_synced:".length))) continue;
+        const record = JSON.parse((await env.HERMES_KV.get(name)) || "null");
+        if (!record || record.property !== property || record.date < today) continue;
+        const outcome = await handleIcalCancellation(env, property, record);
+        await env.HERMES_KV.delete(name);
+        cancelled++;
+        await appendLog(env, { who: "Scheduler", what: `${property}: booking checking out ${record.date} was cancelled in its iCal feed -- clean ${outcome}.` });
+      }
+      results.push({ property, bookings: bookings.length, created, cancelled });
     } catch (err) {
       await appendLog(env, { who: "Scheduler", what: `iCal sync failed for ${property}: ${err.message}` });
       results.push({ property, error: err.message });
