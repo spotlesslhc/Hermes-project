@@ -28,6 +28,13 @@ step animate. The page polls `GET /api/flow` every 5s while visible.
   Overseer's own `attn` status lights its Zapier step.
 - A step glows only for its own lane's agent (matched on agent + app).
 
+## Labels
+
+Worker steps are labeled by the agent doing the work (Scheduler, Bookkeeper,
+Zapier Overseer, Marketing Agent), not just "Deja (Worker)": a step's optional
+`name` in `LANES` overrides the app's name. The Claude steps read "Site Editor
+Agent (Claude)" and "Deja (Claude)".
+
 ## Changing it
 
 The lanes are the `LANES` array in `workflow.html`; edit it when a real

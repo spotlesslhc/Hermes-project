@@ -14,9 +14,9 @@ Context: [[2026-09-30-website-worker-deploy-config]]. Repo
 ## Already live (merged 2026-09-30)
 
 Mobile menu, honeypot, logo file (PR #1); self-hosted fonts, contrast,
-favicon, OG/Twitter, JSON-LD, sitemap (PR #2); 3-step quote form with the price
-shown only after submit plus a "Change add-ons" button that resubmits as an
-UPDATED request (PR #3); FAQ + FAQPage JSON-LD (PR #4). Decided: **no
+favicon, OG/Twitter, JSON-LD, sitemap (PR #2); quote form with the price
+shown only after submit and a Back button that resubmits as an UPDATED request
+(PR #3; collapsed from 3 steps to 2 pages in PR #7, 2026-10-02); FAQ + FAQPage JSON-LD (PR #4). Decided: **no
 `robots.txt`** (Cloudflare's managed one stays).
 
 ## Status (2026-09-30, end of session)

@@ -23,10 +23,14 @@ Worker. Deploy history and the `.assetsignore` mistake:
 - `index.html` is **CRLF**; scripted edits must match on `\r\n`.
 
 ## Quote form
-3 steps (details, space, extras), price shown only after submit, posts to
-Formspree (`xppanjew`, honeypot `_gotcha`). Result screen has "Change add-ons"
-which resubmits as `UPDATED quote request` (Bryce accepted multiple emails).
-Pricing table lives in the page's inline JS (`PRICING`).
+Two pages (changed 2026-10-02, website PR #7): page 1 is one form with
+everything (details, space, add-ons, notes) and a single "Submit and get quote"
+button; page 2 is the quote, with a "Back - change my answers" button that
+returns to the form with answers kept. Price shown only after submit, posts to
+Formspree (`xppanjew`, honeypot `_gotcha`). Resubmitting after Back sends an
+`UPDATED quote request` (Bryce accepted multiple emails). It used to be a
+3-step wizard with Next/Back. Pricing table lives in the page's inline JS
+(`PRICING`).
 
 ## Reviews (Worker + KV)
 - `worker.js` handles `/api/reviews*`, everything else goes to assets
