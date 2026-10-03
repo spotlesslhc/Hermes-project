@@ -90,6 +90,14 @@ add a candidate to "My Voices" in ElevenLabs, get its voice ID, swap the
 against a branch preview before merging.
 
 
+## Volume knob (added 2026-10-02)
+
+A range slider next to "Speak replies" on the dashboard sets how loud Deja
+speaks, saved in `localStorage` (`dejaVolume`, 0-1) and applied to both the
+ElevenLabs audio element and the browser-voice fallback. On iPhone Safari the
+page can't set media volume (iOS ignores `audio.volume`), so there the
+hardware buttons control the ElevenLabs voice.
+
 ## When Deja sounds robotic (diagnosing the fallback)
 
 Added 2026-10-01. A robotic voice means the dashboard fell back to the

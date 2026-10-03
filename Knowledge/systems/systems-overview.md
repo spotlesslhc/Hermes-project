@@ -123,6 +123,27 @@ The dashboard page itself (the HTML you see) is *not* run by this
 program — Cloudflare just serves it directly, like a plain file. The
 Worker only kicks in for those API and webhook addresses.
 
+## Scheduling, invoicing and texting (built 2026-10-02)
+
+Deja's Scheduler and Bookkeeper tools grew a lot in one session; each has its
+own doc, read these before touching them:
+
+- **Calendar changes** (`reschedule_clean`, `cancel_clean`, `create_clean_event`,
+  `assign_cleaner` now reading the Cleans calendar directly, `resend_cleaner_invites`):
+  [[scheduler]], [[turno-scheduling]]. Moves and cancellations are written to
+  KV logs (`clean_moves`, `clean_cancellations`) so the Bookkeeper can reconcile
+  invoices.
+- **Invoices** (`create_wave_invoice`, `set_invoice_discount`, `audit_draft_invoices`
+  and the 4pm-Arizona send job that fact-checks drafts against the calendar,
+  amounts and standing discounts, then queues one dashboard approval to send):
+  [[invoice-sending]].
+- **Texting cleaners from Bryce's Google Voice** through a Browserbase cloud
+  browser (`text_cleaner`, `text_cleaner_schedule`, `get_clean_invite_links`,
+  `check_text_status`, `test_voice_compose`): [[cleaner-text-notifications]],
+  including the proven method for sending Amy her invites.
+- Every one of those that emails or texts someone, deletes, or sends is in
+  `APPROVAL_REQUIRED_TOOLS`; see [[approval-queue]].
+
 ## The KV namespace (Hermes' memory)
 
 Workers don't remember anything between requests on their own, so
@@ -133,7 +154,8 @@ named `HERMES_KV`. Right now it holds five things:
 - **Agent status** — the running/idle/needs-review state shown on each
   agent card.
 - **Activity log** — the running list of what each agent has done
-  recently (most recent 200 entries).
+  recently (most recent 200 entries). On the dashboard, entries longer than ~90 characters fold into a
+  short title with an arrow; click it to expand the full text (added 2026-10-02).
 - **Reservations** — new bookings received from the Zapier webhook,
   each marked assigned or not yet assigned.
 - **Monthly finance entries** (`finance:month:YYYY-MM`) — Bryce's
