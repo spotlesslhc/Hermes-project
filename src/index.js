@@ -2156,6 +2156,106 @@ async function createCleanEvent(env, { property, date, sameDayCheckin, address }
   return { created: true, summary: msg };
 }
 
+// iCal feed sync (added 2026-10-03): for properties that only offer an iCal
+// link (Airbnb/VRBO exports), turn each upcoming reservation into a plain
+// clean on the checkout date -- nothing else from the feed ever reaches the
+// calendar (no guest names, no check-in/out blocks, no "Not available"
+// blocks). The feed URLs are private to the listing owner, so they live in KV
+// (`ical_feeds`, JSON {streetNumberOrNickname: url}), never in this public
+// repo. Cleans are made by createCleanEvent, so they follow the standard
+// format (10am-4pm, title/location/description copied from the property's
+// earlier cleans) and invite nobody.
+const ICAL_LOOKAHEAD_DAYS = 120;
+
+async function getIcalFeeds(env) {
+  const raw = await env.HERMES_KV.get("ical_feeds");
+  return raw ? JSON.parse(raw) : {};
+}
+
+async function setIcalFeed(env, { property, url }) {
+  const key = String(property || "").trim();
+  if (!key) throw new Error("property is required");
+  const feeds = { ...(await getIcalFeeds(env)) };
+  if (!url) {
+    delete feeds[key];
+  } else {
+    const u = new URL(url.replace(/^webcal:/i, "https:"));
+    if (u.protocol !== "https:") throw new Error("The iCal link must be https:// (or webcal://).");
+    feeds[key] = u.toString();
+  }
+  await env.HERMES_KV.put("ical_feeds", JSON.stringify(feeds));
+  // Never log the URL itself: it works as a password for the listing's calendar.
+  const what = url ? `iCal feed saved for ${key}` : `iCal feed removed for ${key}`;
+  await appendLog(env, { who: "Scheduler", what });
+  return { what, properties: Object.keys(feeds) };
+}
+
+// Minimal iCalendar reader: unfolds lines, returns {uid, summary, start, end}
+// with all-day dates as YYYY-MM-DD (DTEND is exclusive, i.e. the checkout day).
+function parseIcalReservations(text) {
+  const lines = text.replace(/\r?\n[ \t]/g, "").split(/\r?\n/);
+  const out = [];
+  let cur = null;
+  for (const line of lines) {
+    if (line === "BEGIN:VEVENT") { cur = {}; continue; }
+    if (line === "END:VEVENT") { if (cur?.start && cur?.end) out.push(cur); cur = null; continue; }
+    if (!cur) continue;
+    const i = line.indexOf(":");
+    if (i < 0) continue;
+    const name = line.slice(0, i).split(";")[0].toUpperCase();
+    const value = line.slice(i + 1).trim();
+    const date = (value.match(/^(\d{4})(\d{2})(\d{2})/) || []).slice(1).join("-");
+    if (name === "UID") cur.uid = value;
+    else if (name === "SUMMARY") cur.summary = value;
+    else if (name === "STATUS") cur.status = value;
+    else if (name === "DTSTART") cur.start = date;
+    else if (name === "DTEND") cur.end = date;
+  }
+  return out;
+}
+
+// Airbnb marks owner blocks "Airbnb (Not available)" and real bookings
+// "Reserved"; other platforms use "Blocked"/"Unavailable" for blocks.
+function isIcalBlock(e) {
+  return /not available|unavailable|blocked|closed/i.test(e.summary || "") || /cancel/i.test(e.status || "");
+}
+
+async function syncIcalFeeds(env) {
+  const feeds = await getIcalFeeds(env);
+  const today = new Date().toISOString().slice(0, 10);
+  const horizon = addDays(new Date(), ICAL_LOOKAHEAD_DAYS).toISOString().slice(0, 10);
+  const results = [];
+  for (const [property, url] of Object.entries(feeds)) {
+    try {
+      const res = await fetch(url, { headers: { accept: "text/calendar" } });
+      if (!res.ok) throw new Error(`feed returned HTTP ${res.status}`);
+      const all = parseIcalReservations(await res.text());
+      const bookings = all.filter((e) => !isIcalBlock(e));
+      let created = 0;
+      for (const b of bookings) {
+        if (b.end < today || b.end > horizon) continue;
+        // Remember what was synced so a clean Bryce later deletes or moves by
+        // hand isn't recreated every day; a changed checkout date is new work.
+        const key = `ical_synced:${b.uid || `${property}:${b.start}`}`;
+        const prior = await env.HERMES_KV.get(key);
+        if (prior === b.end) continue;
+        const sameDayCheckin = bookings.some((o) => o !== b && o.start === b.end);
+        const r = await createCleanEvent(env, { property, date: b.end, sameDayCheckin });
+        await env.HERMES_KV.put(key, b.end, { expirationTtl: 60 * 60 * 24 * 400 });
+        if (r.created) created++;
+        if (prior) {
+          await appendLog(env, { who: "Scheduler", what: `${property}: a booking's checkout moved from ${prior} to ${b.end} in its iCal feed. A new clean was added for ${b.end}; the old one on ${prior} was left in place -- check whether to delete it.` });
+        }
+      }
+      results.push({ property, bookings: bookings.length, created });
+    } catch (err) {
+      await appendLog(env, { who: "Scheduler", what: `iCal sync failed for ${property}: ${err.message}` });
+      results.push({ property, error: err.message });
+    }
+  }
+  return results;
+}
+
 async function createWaveInvoiceForClean(env, { property, date, customerName, approveWithoutSending }) {
   const number = await resolveStreetNumber(env, property);
   const today = phoenixToday();
@@ -3452,6 +3552,8 @@ const TOOL_ACTIVITY = {
   cancel_turno_clean: ["scheduler", ["google_calendar"]],
   resend_cleaner_invites: ["scheduler", ["google_calendar"]],
   create_clean_event: ["scheduler", ["google_calendar"]],
+  set_ical_feed: ["scheduler", ["google_calendar"]],
+  sync_ical_feeds: ["scheduler", ["google_calendar"]],
   get_clean_invite_links: ["scheduler", ["google_calendar"]],
   text_cleaner: ["scheduler", ["google_voice"]],
   text_cleaner_schedule: ["scheduler", ["google_voice"]],
@@ -4105,6 +4207,13 @@ async function dispatchToolInner(env, name, input) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date || "")) throw new Error("date must be YYYY-MM-DD");
     return (await createCleanEvent(env, { property: input.property, date: input.date, sameDayCheckin: !!input.same_day_checkin, address: input.address })).summary;
   }
+  if (name === "set_ical_feed") {
+    const r = await setIcalFeed(env, { property: input.property, url: input.url });
+    return `Saved. ${r.what}. Feeds now set for: ${r.properties.join(", ") || "none"}. They sync daily; call sync_ical_feeds to run it now.`;
+  }
+  if (name === "sync_ical_feeds") {
+    return JSON.stringify(await syncIcalFeeds(env));
+  }
   if (name === "create_wave_invoice") {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date || "")) throw new Error("date must be YYYY-MM-DD");
     return await createWaveInvoiceForClean(env, { property: input.property, date: input.date, customerName: input.customer_name, approveWithoutSending: !!input.approve_without_sending });
@@ -4594,6 +4703,23 @@ async function handleAsk(request, env) {
       },
       required: ["property", "date"]
     }
+  });
+  tools.push({
+    name: "set_ical_feed",
+    description: "Scheduler: save (or remove, with an empty url) the iCal link for a property that only offers one (e.g. an Airbnb calendar export). Each day the Worker reads it and adds ONLY a clean on each reservation's checkout date to the Cleans calendar, in the standard 10am-4pm format -- no guest info, check-in/out blocks or owner blocks ever appear. The link is private, so it is stored in KV and never logged or repeated back. No approval needed.",
+    input_schema: {
+      type: "object",
+      properties: {
+        property: { type: "string", description: "Street number/address or nickname, e.g. \"2230 Fremont Dr\"." },
+        url: { type: "string", description: "The https:// or webcal:// iCal link. Empty to remove the feed." }
+      },
+      required: ["property"]
+    }
+  });
+  tools.push({
+    name: "sync_ical_feeds",
+    description: "Scheduler: read every saved iCal feed now (they also run daily at 8am Arizona) and add any missing cleans for upcoming checkouts. Safe to repeat -- it never duplicates a clean. Invites nobody; assign_cleaner is the next step.",
+    input_schema: { type: "object", properties: {}, required: [] }
   });
   tools.push({
     name: "create_wave_invoice",
@@ -5588,6 +5714,7 @@ export default {
       ctx.waitUntil(resetWeeklyZapierErrorCount(env));
     }
     if (event.cron === "0 15 * * *") {
+      ctx.waitUntil(withActivity(env, "scheduler", ["google_calendar"], "iCal feed sync", () => syncIcalFeeds(env)));
       ctx.waitUntil(withActivity(env, "scheduler", ["google_calendar", "telegram"], "Daily staffing check", () => runDailyCleanTextCheck(env)));
     }
     if (event.cron === "0 23 * * *") {

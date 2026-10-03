@@ -140,3 +140,26 @@ don't arrive, check Amy's iCloud **Junk** folder and that her real address is
 exactly that one; the fallback is the cleaner text reminders
 ([[unfinished-projects/cleaner-sms-3week-notifications]]) or sharing the event
 link by text.
+
+## iCal feed sync (added 2026-10-03)
+
+For properties that only give Bryce an iCal link (e.g. an Airbnb calendar
+export), `syncIcalFeeds` reads the feed daily (8am Arizona, with the daily
+staffing check) and adds **only** a clean on each reservation's checkout date
+via `createCleanEvent` — standard 10am–4pm format, nothing from the feed
+(guest names, check-in/out blocks, "Not available" owner blocks) reaches the
+calendar. A booking starting the same day another checks out gets the
+Basil / "Same day checkin" treatment.
+
+- **Setup:** tell Deja "set the iCal feed for 2230 Fremont Dr to <link>"
+  (`set_ical_feed`; empty url removes it), then `sync_ical_feeds` to run now.
+  Links are stored in KV `ical_feeds`, never in the repo (public) and never
+  logged — an iCal link works like a password for that listing's calendar.
+- Each property needs an earlier clean on the Cleans calendar to copy
+  title/location/description from (else pass an address via create_clean_event).
+- Synced bookings are remembered (`ical_synced:<uid>`), so a clean Bryce
+  deletes by hand isn't recreated. A changed checkout date adds a clean on
+  the new date and logs a note to check the old one.
+- **Not handled:** cancelled bookings disappear from the feed but their clean
+  isn't deleted automatically — use `cancel_clean`. Invites nobody and makes
+  no invoice (`assign_cleaner` / `create_wave_invoice` are the next steps).
